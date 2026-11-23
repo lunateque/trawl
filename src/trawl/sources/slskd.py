@@ -1,11 +1,30 @@
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import cast
 
 from trawl.core.audio import AUDIO_EXTS
 from trawl.core.catalog import array_value, object_value
+from trawl.core.fetch import Candidate, FetchIssue
 from trawl.sources.folder import Folder, FolderFile, disc_number
+
+_MIN_FILE_LIMIT = 200_000_000
+_PCM_BYTES_PER_MS = 96_000 * 2 * 3 // 1000
+
+
+def index_items(candidate: Candidate) -> tuple[dict[str, tuple[int, int]], dict[str, FetchIssue]]:
+    indexed: dict[str, tuple[int, int]] = {}
+    issues: dict[str, FetchIssue] = {}
+    for n, item in enumerate(candidate.items):
+        cap = max(_MIN_FILE_LIMIT, 3 * _PCM_BYTES_PER_MS * (item.expected_length_ms or 0))
+        if item.size is None or item.size <= 0:
+            issues[item.ref] = FetchIssue("slskd file has no valid size")
+        elif item.size > cap:
+            issues[item.ref] = FetchIssue(f"slskd file exceeds size limit ({cap} bytes)")
+        else:
+            indexed[item.ref] = (n, item.size)
+    return indexed, issues
 
 
 def _number(raw: object) -> int | None:
@@ -72,8 +91,7 @@ class Transfer:
     state: frozenset[str]
 
 
-def parse_transfers(raw: object) -> dict[str, Transfer]:
-    transfers: dict[str, Transfer] = {}
+def parse_transfers(raw: object) -> Iterator[tuple[str, Transfer]]:
     stack = [raw]
     while stack:
         value = stack.pop()
@@ -88,12 +106,14 @@ def parse_transfers(raw: object) -> dict[str, Transfer]:
             continue
         name, key, state = info.get("filename"), info.get("id"), info.get("state")
         if isinstance(name, str) and isinstance(key, str) and isinstance(state, str):
-            transfers[name.replace("\\", "/")] = Transfer(
-                key,
-                _number(info.get("bytesTransferred")) or 0,
-                frozenset(word.strip().casefold() for word in state.split(",")),
+            yield (
+                name.replace("\\", "/"),
+                Transfer(
+                    key,
+                    _number(info.get("bytesTransferred")) or 0,
+                    frozenset(word.strip().casefold() for word in state.split(",")),
+                ),
             )
-    return transfers
 
 
 def is_path_component(value: str) -> bool:

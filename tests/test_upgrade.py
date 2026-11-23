@@ -1,3 +1,4 @@
+import sqlite3
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
@@ -19,8 +20,8 @@ from trawl.verify.fingerprint import AcoustId
 
 
 @pytest.mark.tools
-@pytest.mark.parametrize("case", ["lossy", "permission", "success"])
-async def test_upgrade_uses_only_lossless_and_keeps_locked_original(
+@pytest.mark.parametrize("case", ["lossy", "permission", "database", "success"])
+async def test_upgrade_replaces_only_with_lossless_and_preserves_original_on_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
     cfg = Config(
@@ -74,6 +75,19 @@ async def test_upgrade_uses_only_lossless_and_keeps_locked_original(
             mb = MusicBrainzClient(http, conn, 30)
             monkeypatch.setattr(mb, "release", lookup)
             deps = RunDeps(http, mb, [LocalSource((inbox,), move=True)], AcoustId(http, "fixture"))
+            if case == "database":
+                with conn:
+                    conn.execute(
+                        """CREATE TRIGGER reject_upgrade BEFORE UPDATE OF codec ON tracks
+                        BEGIN SELECT RAISE(ABORT, 'upgrade write failed'); END"""
+                    )
+                with pytest.raises(sqlite3.IntegrityError, match="upgrade write failed"):
+                    await upgrade_pass(conn, cfg, deps, now=True)
+                row = conn.execute("SELECT path,codec,lossless FROM tracks").fetchone()
+                assert tuple(row) == (str(old), "opus", 0)
+                assert old.read_bytes() == original and not old.with_suffix(".flac").exists()
+                assert source_file.is_file()
+                return
             report = await upgrade_pass(conn, cfg, deps, now=True)
             row = conn.execute("SELECT path,codec,lossless FROM tracks").fetchone()
             new = old.with_suffix(".flac")
@@ -81,6 +95,7 @@ async def test_upgrade_uses_only_lossless_and_keeps_locked_original(
             if case == "success":
                 assert tuple(row) == (str(new), "flac", 1)
                 assert new.is_file() and not old.exists()
+                assert not source_file.exists()
             else:
                 assert tuple(row) == (str(old), "opus", 0)
                 assert old.read_bytes() == original and not new.exists() and source_file.is_file()

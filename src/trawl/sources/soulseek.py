@@ -2,9 +2,10 @@ import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack
-from dataclasses import dataclass, replace
+from contextlib import AsyncExitStack, suppress
+from dataclasses import dataclass, field, replace
 from functools import partial
+from os.path import lexists
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
@@ -28,6 +29,7 @@ from trawl.sources.folder import Folder, FolderMatch, rank_folders
 from trawl.sources.local import stage_file
 from trawl.sources.slskd import (
     Transfer,
+    index_items,
     is_path_component,
     parse_folders,
     parse_transfers,
@@ -42,8 +44,6 @@ _EDITION = re.compile(
     re.I,
 )
 _FAILED = {"errored", "rejected", "cancelled", "timedout", "timed out"}
-_MIN_FILE_LIMIT = 200_000_000
-_PCM_BYTES_PER_MS = 96_000 * 2 * 3 // 1000
 
 
 def _abandon_stage(workspace: TemporaryDirectory[str], task: asyncio.Task[Fetched]) -> None:
@@ -55,26 +55,19 @@ def _abandon_stage(workspace: TemporaryDirectory[str], task: asyncio.Task[Fetche
         _LOG.warning("Cannot clean up cancelled slskd staging files: %s", exc)
 
 
-def _index_items(candidate: Candidate) -> tuple[dict[str, tuple[int, int]], dict[str, FetchIssue]]:
-    indexed: dict[str, tuple[int, int]] = {}
-    issues: dict[str, FetchIssue] = {}
-    for n, item in enumerate(candidate.items):
-        cap = max(_MIN_FILE_LIMIT, 3 * _PCM_BYTES_PER_MS * (item.expected_length_ms or 0))
-        if item.size is None or item.size <= 0:
-            issues[item.ref] = FetchIssue("slskd file has no valid size")
-        elif item.size > cap:
-            issues[item.ref] = FetchIssue(f"slskd file exceeds size limit ({cap} bytes)")
-        else:
-            indexed[item.ref] = (n, item.size)
-    return indexed, issues
-
-
 @dataclass
 class _Waits:
     pending: set[str]
-    ready: list[str]
     progress: dict[str, int]
     moves: dict[str, float]
+
+
+@dataclass
+class _Downloads:
+    previous: set[str] = field(default_factory=set[str])
+    preexisting: set[str] = field(default_factory=set[str])
+    ids: dict[str, str] = field(default_factory=dict[str, str])
+    ready: set[str] = field(default_factory=set[str])
 
 
 class SoulseekSource:
@@ -115,6 +108,7 @@ class SoulseekSource:
         *,
         body: object = None,
         params: Mapping[str, str] | None = None,
+        missing_ok: bool = False,
     ) -> object:
         if not self._key:
             raise SourceWall("slskd_api_key is not configured")
@@ -128,6 +122,8 @@ class SoulseekSource:
                 service="slskd",
             )
         except HttpError as exc:
+            if missing_ok and exc.status == 404:
+                return []
             if exc.status is None or exc.status in {401, 403, 429} or exc.status >= 500:
                 raise SourceWall(str(exc)) from None
             raise FetchError(str(exc)) from None
@@ -241,59 +237,87 @@ class SoulseekSource:
             if not abandoned:
                 workspace.cleanup()
 
+    def _discard(self, ready: set[str], indexed: dict[str, tuple[int, int]]) -> None:
+        for name in ready:
+            try:
+                path = self._path(name, indexed[name][1])
+                if unlink_regular(path):
+                    with suppress(OSError):
+                        path.parent.rmdir()
+            except (FetchError, OSError) as exc:
+                _LOG.warning("Cannot clean up rejected slskd file: %s", exc)
+
+    async def _cancel(self, endpoint: str, downloads: _Downloads) -> None:
+        for key in downloads.ids.values():
+            await self._delete(f"{endpoint}/{quote(key, safe='')}", remove=True)
+
     async def fetch(self, candidate: Candidate, into: Path) -> list[Fetched]:
         names = [str(self._destination(item.ref)).casefold() for item in candidate.items]
         if len(set(names)) != len(names):
             raise FetchError("slskd candidate has colliding download paths")
         endpoint = f"/transfers/downloads/{quote(candidate.ref, safe='')}"
-        transfers: dict[str, str] = {}
-        lock = self._peers.setdefault(candidate.ref, asyncio.Lock())
+        indexed, issues = index_items(candidate)
+        downloads = _Downloads()
         deadline = asyncio.timeout(self._candidate_timeout)
         async with AsyncExitStack() as stack:
             try:
                 async with deadline:
-                    await stack.enter_async_context(lock)
+                    peer = self._peers.setdefault(candidate.ref, asyncio.Lock())
+                    await stack.enter_async_context(peer)
                     # slskd flattens peer paths; another peer can write to the same destination.
                     for name in sorted(names):
                         await stack.enter_async_context(
                             self._paths.setdefault(name, asyncio.Lock())
                         )
                     async with self._limit:
-                        return await self._fetch(candidate, into, endpoint, transfers)
-            except TimeoutError:
-                if not deadline.expired():
+                        return await self._fetch(into, endpoint, indexed, issues, downloads)
+            except (TimeoutError, asyncio.CancelledError) as exc:
+                if isinstance(exc, TimeoutError) and not deadline.expired():
                     raise
                 try:
                     async with asyncio.timeout(2):
-                        for key in transfers.values():
-                            await self._delete(f"{endpoint}/{quote(key, safe='')}", remove=True)
+                        await self._cancel(endpoint, downloads)
                 except TimeoutError:
                     _LOG.warning("slskd transfer cleanup timed out")
-                seconds = self._candidate_timeout
-                raise FetchError(f"slskd candidate timed out after {seconds:g}s") from None
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                raise FetchError(
+                    f"slskd candidate timed out after {self._candidate_timeout:g}s"
+                ) from None
+            finally:
+                if discarded := downloads.ready - downloads.preexisting:
+                    await asyncio.to_thread(self._discard, discarded, indexed)
 
     async def _fetch(
         self,
-        candidate: Candidate,
         into: Path,
         endpoint: str,
-        transfer_ids: dict[str, str],
+        indexed: dict[str, tuple[int, int]],
+        issues: dict[str, FetchIssue],
+        downloads: _Downloads,
     ) -> list[Fetched]:
-        indexed, issues = _index_items(candidate)
         if indexed:
+            # The enqueue response has no transfer IDs. Exclude old records and files.
+            prior = await self._api("GET", endpoint, missing_ok=True)
+            downloads.previous = {transfer.id for _, transfer in parse_transfers(prior)}
+            downloads.preexisting = await asyncio.to_thread(
+                lambda: {name for name in indexed if lexists(self._destination(name))}
+            )
             await self._api(
                 "POST",
                 endpoint,
                 body=[{"filename": name, "size": size} for name, (_, size) in indexed.items()],
             )
-        ready, wall = await self._poll(endpoint, indexed, transfer_ids, issues)
+        wall = await self._poll(endpoint, indexed, downloads, issues)
         files: list[Fetched] = []
-        for name in ready:
+        for name in sorted(downloads.ready):
             try:
                 n, size = indexed[name]
                 files.append(await self._stage(name, size, into, n))
             except (FetchError, AudioError, OSError) as exc:
                 issues[name] = FetchIssue(str(exc), isinstance(exc, AudioError))
+            else:
+                downloads.ready.remove(name)
         if issues:
             raise PartialFetchError(files, issues, wall)
         return files
@@ -302,15 +326,19 @@ class SoulseekSource:
         self,
         endpoint: str,
         indexed: dict[str, tuple[int, int]],
-        transfer_ids: dict[str, str],
+        downloads: _Downloads,
         issues: dict[str, FetchIssue],
-    ) -> tuple[list[str], SourceWall | None]:
+    ) -> SourceWall | None:
         pending = set(indexed)
-        waits = _Waits(pending, [], {}, dict.fromkeys(indexed, self._clock()))
+        waits = _Waits(pending, {}, dict.fromkeys(indexed, self._clock()))
         wall: SourceWall | None = None
         while pending:
             try:
-                active = parse_transfers(await self._api("GET", endpoint))
+                active = {
+                    name: transfer
+                    for name, transfer in parse_transfers(await self._api("GET", endpoint))
+                    if transfer.id not in downloads.previous
+                }
             except (FetchError, SourceWall) as exc:
                 if isinstance(exc, SourceWall):
                     wall = exc
@@ -320,25 +348,23 @@ class SoulseekSource:
             now = self._clock()
             stalled = False
             for name in sorted(pending):
-                name_key = name.replace("\\", "/")
                 stalled |= await self._poll_file(
                     endpoint,
                     name,
                     indexed[name][1],
-                    active.get(name_key),
+                    active.get(name.replace("\\", "/")),
                     waits,
-                    transfer_ids,
+                    downloads,
                     issues,
                     now,
                 )
             if stalled:
-                for transfer_id in transfer_ids.values():
-                    await self._delete(f"{endpoint}/{quote(transfer_id, safe='')}", remove=True)
+                await self._cancel(endpoint, downloads)
                 issues.update(dict.fromkeys(indexed, FetchIssue("stalled")))
                 raise PartialFetchError([], issues, None)
             if pending:
                 await self._sleep(1)
-        return waits.ready, wall
+        return wall
 
     async def _poll_file(
         self,
@@ -347,22 +373,22 @@ class SoulseekSource:
         limit: int,
         transfer: Transfer | None,
         waits: _Waits,
-        transfer_ids: dict[str, str],
+        downloads: _Downloads,
         issues: dict[str, FetchIssue],
         now: float,
     ) -> bool:
         if transfer:
-            transfer_ids[name] = transfer.id
+            downloads.ids[name] = transfer.id
             if transfer.bytes > limit:
                 waits.pending.remove(name)
                 issues[name] = FetchIssue("slskd transfer exceeded advertised size")
                 await self._delete(f"{endpoint}/{quote(transfer.id, safe='')}", remove=True)
-                del transfer_ids[name]
+                del downloads.ids[name]
                 return False
         if transfer and "completed" in transfer.state:
             waits.pending.remove(name)
             if "succeeded" in transfer.state:
-                waits.ready.append(name)
+                downloads.ready.add(name)
             else:
                 failure = ", ".join(sorted(transfer.state & _FAILED))
                 issues[name] = FetchIssue(f"slskd transfer failed: {failure or 'not succeeded'}")

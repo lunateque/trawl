@@ -266,14 +266,18 @@ async def test_soulseek_rejects_oversize_before_queueing(tmp_path: Path) -> None
 async def test_soulseek_candidate_timeout_even_with_progress(tmp_path: Path) -> None:
     bytes_so_far = 0
     deleted = False
+    queued = False
 
     async def handle(request: httpx.Request) -> httpx.Response:
-        nonlocal bytes_so_far, deleted
+        nonlocal bytes_so_far, deleted, queued
         if request.method == "DELETE":
             deleted = True
             return httpx.Response(204)
         if request.method == "POST":
+            queued = True
             return httpx.Response(201)
+        if not queued:
+            return httpx.Response(404)
         bytes_so_far += 1
         return httpx.Response(
             200,
