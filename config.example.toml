@@ -20,7 +20,21 @@ prefer = "original"
 discography_limit = 14
 
 [sources]
-order = ["ytmusic"]
+order = ["local", "ytmusic"]
+# To enable Soulseek: order = ["local", "soulseek", "ytmusic"]
+lossless_repack = true
+album_coverage = 1.0
+track_coverage = 0.0
+
+[sources.soulseek]
+download_dir = "" # required when soulseek is in order
+concurrency = 3
+search_timeout_s = 30
+stall_timeout_s = 600
+
+[sources.local]
+inbox = []
+move = false
 
 [sources.ytmusic]
 concurrency = 2
@@ -37,6 +51,9 @@ enabled = true
 [run]
 retry_missing_days = 7
 
+[upgrade]
+older_than_days = 14
+
 [genres.map]
 
 [genres.artist]
@@ -44,3 +61,5 @@ retry_missing_days = 7
 # In a separate secrets.toml beside this file:
 # acoustid_key = "your application key"
 # youtube_cookies = "cookies.txt" # optional
+# slskd_url = "http://localhost:5030"
+# slskd_api_key = "your slskd API key"

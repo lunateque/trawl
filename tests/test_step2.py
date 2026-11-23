@@ -18,9 +18,13 @@ def test_run_requires_acoustid(tmp_path: Path) -> None:
     assert "https://acoustid.org/new-application" in result.output
 
 
-@pytest.mark.parametrize("source", ["soulseek", "local"])
-def test_reject_unimplemented_source(tmp_path: Path, source: str) -> None:
+def test_soulseek_requires_download_directory(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    path.write_text(f'contact_email="a@b"\n[sources]\norder=["{source}"]\n', encoding="utf-8")
-    with pytest.raises(ConfigError, match="available from step"):
+    path.write_text(
+        'contact_email="a@b"\n[sources]\norder=["local","soulseek","ytmusic"]\n', encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="download_dir"):
         load(path)
+    with path.open("a", encoding="utf-8") as config:
+        config.write('[sources.soulseek]\ndownload_dir="download"\n')
+    assert load(path).sources.order == ("local", "soulseek", "ytmusic")

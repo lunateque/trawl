@@ -28,6 +28,8 @@ class Probe:
     channels: int
     duration_ms: int
     bitrate: int | None
+    bits: int | None = None
+    sample_fmt: str | None = None
 
 
 def probe(path: Path) -> Probe:
@@ -52,12 +54,16 @@ def probe(path: Path) -> Probe:
         )
         info = object_value(data.get("format"))
         bitrate = audio.get("bit_rate") or info.get("bit_rate")
+        bits = audio.get("bits_per_raw_sample") or audio.get("bits_per_sample")
+        sample_fmt = audio.get("sample_fmt")
         return Probe(
             str(audio["codec_name"]),
             int(str(audio["sample_rate"])),
             int(str(audio["channels"])),
             round(1000 * float(str(audio.get("duration") or info["duration"]))),
             round(int(str(bitrate)) / 1000) if str(bitrate).isdigit() else None,
+            int(str(bits)) if str(bits).isdigit() and int(str(bits)) else None,
+            sample_fmt if isinstance(sample_fmt, str) else None,
         )
     except (KeyError, ValueError, StopIteration, OverflowError) as exc:
         raise AudioError("ffprobe did not report a readable audio stream") from exc

@@ -128,7 +128,16 @@ def upsert_release(conn: sqlite3.Connection, release: Release, reason: dict[str,
         ON CONFLICT (mbid) DO UPDATE SET release_group_mbid = excluded.release_group_mbid,
             title = excluded.title, artist_credit = excluded.artist_credit, date = excluded.date,
             original_date = excluded.original_date, type = excluded.type, status = excluded.status,
-            disc_count = excluded.disc_count, choice_reason = excluded.choice_reason""",
+            disc_count = excluded.disc_count,
+            choice_reason = CASE
+                WHEN json_extract(releases.choice_reason, '$.switched_from') IS NOT NULL
+                     AND json_extract(excluded.choice_reason, '$.switched_from') IS NULL
+                THEN json_patch(excluded.choice_reason, json_object(
+                    'switched_from', json_extract(releases.choice_reason, '$.switched_from'),
+                    'switched_reason', json_extract(releases.choice_reason, '$.switched_reason')
+                ))
+                ELSE excluded.choice_reason
+            END""",
         (
             release.mbid,
             group.mbid,
@@ -243,7 +252,12 @@ class Explanation:
 def explain(conn: sqlite3.Connection, kind: Kind | None, target: int | str) -> Explanation:
     match = {
         None: "t.id = ?",
-        Kind.RELEASE: "r.mbid = ?",
+        Kind.RELEASE: """r.mbid IN (
+            WITH RECURSIVE editions(mbid) AS (
+                SELECT ? UNION SELECT switched_to FROM releases JOIN editions USING (mbid)
+                WHERE switched_to IS NOT NULL
+            ) SELECT mbid FROM editions
+        )""",
         Kind.RELEASE_GROUP: "r.release_group_mbid = ?",
         Kind.RECORDING: "t.recording_mbid = ?",
         Kind.ARTIST: """EXISTS (SELECT 1 FROM json_each(t.artist_mbids) WHERE value = ?1)

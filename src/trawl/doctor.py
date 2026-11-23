@@ -13,6 +13,8 @@ from trawl.library.place import staging_dir
 from trawl.mb.client import MusicBrainzClient
 from trawl.net.client import HttpClient, HttpError
 from trawl.net.limiter import RateLimiter
+from trawl.sources.base import FetchError, SourceWall
+from trawl.sources.soulseek import SoulseekSource
 from trawl.tag.replaygain import supports_opus
 from trawl.verify.probe import AudioError
 
@@ -109,6 +111,33 @@ async def _musicbrainz(cfg: Config) -> Check:
     return Check("MusicBrainz", "OK", "reachable")
 
 
+def _existing_directory(name: str, path: Path) -> Check:
+    return (
+        Check(name, "OK", str(path))
+        if path.is_dir()
+        else Check(name, "FAIL", f"Not a directory: {path}")
+    )
+
+
+async def _slskd(config: Path, download: Path, offline: bool) -> Check:
+    try:
+        secrets = load_secrets(config)
+    except ConfigError as exc:
+        return Check("slskd", "FAIL", str(exc))
+    if not secrets.slskd_api_key:
+        return Check("slskd", "FAIL", "configure slskd_api_key in secrets.toml")
+    if offline:
+        return Check("slskd", "SKIPPED", "offline")
+    http = HttpClient("trawl doctor", {}, max_attempts=1)
+    try:
+        await SoulseekSource(http, secrets.slskd_url, secrets.slskd_api_key, download).check()
+    except (FetchError, SourceWall) as exc:
+        return Check("slskd", "FAIL", str(exc))
+    finally:
+        await http.aclose()
+    return Check("slskd", "OK", "reachable and authorized")
+
+
 async def check(config: Path, offline: bool) -> list[Check]:
     try:
         cfg = load(config)
@@ -135,4 +164,11 @@ async def check(config: Path, offline: bool) -> list[Check]:
     checks.append(
         Check("MusicBrainz", "SKIPPED", "offline") if offline else await _musicbrainz(cfg)
     )
+    checks.extend(_existing_directory("Local inbox", path) for path in cfg.sources.local.inbox)
+    if (
+        "soulseek" in cfg.sources.order
+        and (download := cfg.sources.soulseek.download_dir) is not None
+    ):
+        checks.append(_existing_directory("slskd download directory", download))
+        checks.append(await _slskd(config, download, offline))
     return checks

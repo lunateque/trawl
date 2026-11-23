@@ -12,6 +12,8 @@ class CandidateItem:
     length_ms: int | None
     title: str
     disc: int | None = None
+    aliases: tuple[str, ...] = ()
+    size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,8 @@ class Candidate:
     official: bool
     items: tuple[CandidateItem, ...]
     score: float = 0
+    free_slot: bool = False
+    upload_speed: int = 0
 
 
 @dataclass(frozen=True)

@@ -62,7 +62,7 @@ def match_items(
                 flattened=False,
             )
 
-    titles = [norm_title(item.title) for item in items]
+    titles = [{norm_title(title) for title in (item.title, *item.aliases)} for item in items]
     pairs: list[tuple[int | float, str, int]] = []
     for track in tracks:
         if track.mbid in mapped:
@@ -71,7 +71,7 @@ def match_items(
         for i, item in enumerate(items):
             if (
                 i not in used
-                and titles[i] == title
+                and title in titles[i]
                 and within_duration(track.length_ms, item.length_ms)
             ):
                 distance = (
@@ -109,5 +109,9 @@ def score(
         else 0
     )
     return (
-        coverage(tracks, mapping) * 100 - 2 * (mean(errors) if errors else 0) + quality + reliable
+        coverage(tracks, mapping) * 100
+        - 2 * (mean(errors) if errors else 0)
+        + quality
+        + reliable
+        + 5 * candidate.free_slot
     )

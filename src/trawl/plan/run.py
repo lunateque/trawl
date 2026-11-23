@@ -74,7 +74,7 @@ async def _select_release(
     return release, reason, recording_mbid
 
 
-def _store_tracks(
+def store_tracks(
     conn: sqlite3.Connection,
     want: Want,
     release: Release,
@@ -128,8 +128,20 @@ async def _plan_want(
                 repo.set_want_status(conn, want.id, WantStatus.PLANNED)
             return True, 0
     result = await _select_release(mb, want, cfg)
+    if result and want.scope == Scope.ALBUM:
+        release, reason, recording = result
+        active = conn.execute(
+            """WITH RECURSIVE editions(mbid) AS (
+                SELECT ? UNION SELECT switched_to FROM releases JOIN editions USING (mbid)
+                WHERE switched_to IS NOT NULL
+            )
+            SELECT mbid FROM releases JOIN editions USING (mbid) WHERE switched_to IS NULL""",
+            (release.mbid,),
+        ).fetchone()
+        if active is not None and active[0] != release.mbid:
+            result = await mb.release(active[0]), reason, recording
     with conn:
-        planned, inserted = _store_tracks(conn, want, *result) if result else (False, 0)
+        planned, inserted = store_tracks(conn, want, *result) if result else (False, 0)
         repo.set_want_status(conn, want.id, WantStatus.PLANNED if planned else WantStatus.EMPTY)
     return planned, inserted
 

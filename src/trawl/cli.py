@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from trawl import __version__, doctor, log
-from trawl.config import Config, ConfigError, config_path, load, load_secrets
+from trawl.config import Config, ConfigError, Secrets, config_path, load, load_secrets
 from trawl.db import queue, repo
 from trawl.db.connect import open_db
 from trawl.db.repo import Kind, Origin, Scope
@@ -22,6 +22,7 @@ from trawl.mb.models import MbDataError
 from trawl.net.client import HttpClient, HttpError
 from trawl.net.limiter import RateLimiter
 from trawl.normalize import norm_artist, norm_title
+from trawl.plan.import_folder import plan_import
 from trawl.plan.run import plan_new_wants
 from trawl.plan.wants import (
     ForeignLink,
@@ -33,8 +34,13 @@ from trawl.plan.wants import (
 )
 from trawl.runner.lock import LockBusy, acquire
 from trawl.runner.run import RunDeps, run_once
+from trawl.runner.upgrade import upgrade_pass
+from trawl.sources.base import Source
+from trawl.sources.local import LocalSource
+from trawl.sources.soulseek import SoulseekSource
 from trawl.sources.ytmusic import YTMusic, YTMusicSource, video_id
 from trawl.verify.fingerprint import AcoustId
+from trawl.verify.probe import AudioError
 
 app = typer.Typer(help="Plan a tagged local music library with MusicBrainz.", no_args_is_help=True)
 
@@ -223,7 +229,10 @@ def _source_report(
         console.print(Text(f"Wall: {pause.source} until {pause.until} | {pause.reason}"))
 
 
-async def _process(cfg: Config, conn: sqlite3.Connection, only: int | None = None) -> None:
+@asynccontextmanager
+async def _run_deps(
+    cfg: Config, conn: sqlite3.Connection
+) -> AsyncGenerator[tuple[Secrets, RunDeps]]:
     if cfg.source_path is None:
         raise ConfigError("Processing requires a configuration file")
     secrets = load_secrets(cfg.source_path)
@@ -242,27 +251,58 @@ async def _process(cfg: Config, conn: sqlite3.Connection, only: int | None = Non
         },
     )
     try:
-        source = YTMusicSource(YTMusic(), None, secrets.youtube_cookies)
-        report = await run_once(
-            conn,
-            cfg,
+        sources: list[Source] = []
+        for name in cfg.sources.order:
+            if name == "ytmusic":
+                sources.append(YTMusicSource(YTMusic(), None, secrets.youtube_cookies))
+            elif name == "local":
+                local = cfg.sources.local
+                sources.append(
+                    LocalSource(
+                        local.inbox, move=local.move, lossless_repack=cfg.sources.lossless_repack
+                    )
+                )
+            elif name == "soulseek":
+                slskd = cfg.sources.soulseek
+                if slskd.download_dir is None:
+                    raise ConfigError("sources.soulseek.download_dir: required")
+                sources.append(
+                    SoulseekSource(
+                        http,
+                        secrets.slskd_url,
+                        secrets.slskd_api_key,
+                        slskd.download_dir,
+                        concurrency=slskd.concurrency,
+                        search_timeout_s=slskd.search_timeout_s,
+                        stall_timeout_s=slskd.stall_timeout_s,
+                        lossless_repack=cfg.sources.lossless_repack,
+                    )
+                )
+        yield (
             secrets,
             RunDeps(
-                http,
-                MusicBrainzClient(http, conn, cfg.mb.cache_days),
-                [source],
-                AcoustId(http, key),
+                http, MusicBrainzClient(http, conn, cfg.mb.cache_days), sources, AcoustId(http, key)
             ),
-            only=only,
         )
     finally:
         await http.aclose()
+
+
+async def _process(cfg: Config, conn: sqlite3.Connection, only: int | None = None) -> None:
+    async with _run_deps(cfg, conn) as (secrets, deps):
+        report = await run_once(conn, cfg, secrets, deps, only=only)
+    _show_run(report.states, report.outcomes, report.pauses)
+
+
+def _show_run(
+    states: list[tuple[str, int]], outcomes: list[tuple[str, int, int]], pauses: list[queue.Pause]
+) -> None:
     console = Console()
-    states = Table("State", "Count", title="Tracks")
-    for state, count in report.states:
-        states.add_row(state, str(count))
-    console.print(states)
-    _source_report(console, report.outcomes, report.pauses)
+    table = Table("State", "Count", title="Tracks")
+    for state, count in states:
+        table.add_row(state, str(count))
+    console.print(table)
+    _source_report(console, outcomes, pauses)
 
 
 @app.command()
@@ -279,6 +319,50 @@ def run(
         try:
             with acquire(cfg.data_dir):
                 asyncio.run(_process(cfg, conn))
+        except LockBusy as exc:
+            _fail(str(exc), 3)
+
+
+async def _import_folder(cfg: Config, conn: sqlite3.Connection, directory: Path) -> None:
+    async with _run_deps(cfg, conn) as (secrets, deps):
+        release = await plan_import(conn, cfg, deps.mb, deps.acoustid, directory)
+        typer.echo(f"Import: {release.title} ({release.mbid})")
+        report = await run_once(conn, cfg, secrets, deps, release_mbid=release.mbid)
+    _show_run(report.states, report.outcomes, report.pauses)
+
+
+@app.command("import")
+def import_command(
+    ctx: typer.Context,
+    directory: Annotated[Path, typer.Argument(exists=True, file_okay=False, readable=True)],
+) -> None:
+    """Identify an album folder by fingerprint and import its files."""
+    with _session(ctx.obj) as (cfg, conn):
+        try:
+            with acquire(cfg.data_dir):
+                asyncio.run(_import_folder(cfg, conn, directory))
+        except LockBusy as exc:
+            _fail(str(exc), 3)
+        except (AudioError, ValueError) as exc:
+            _fail(str(exc), 1)
+
+
+async def _upgrade(cfg: Config, conn: sqlite3.Connection, now: bool) -> None:
+    async with _run_deps(cfg, conn) as (_, deps):
+        report = await upgrade_pass(conn, cfg, deps, now=now)
+    typer.echo(
+        f"Releases checked: {report.checked}; "
+        f"tracks upgraded: {report.replaced}; deferred: {report.deferred}"
+    )
+
+
+@app.command()
+def upgrade(ctx: typer.Context, now: Annotated[bool, typer.Option("--now")] = False) -> None:
+    """Replace verified lossy library audio with lossless files."""
+    with _session(ctx.obj) as (cfg, conn):
+        try:
+            with acquire(cfg.data_dir):
+                asyncio.run(_upgrade(cfg, conn, now))
         except LockBusy as exc:
             _fail(str(exc), 3)
 
@@ -310,6 +394,8 @@ def pick(ctx: typer.Context, track: int, candidate: str) -> None:
             raise ConfigError("Pick requires a configuration file")
         if not load_secrets(cfg.source_path).acoustid_key:
             _fail("AcoustID key required for pick; configure acoustid_key in secrets.toml", 1)
+        if source == "ytmusic" and source not in cfg.sources.order:
+            _fail("Enable ytmusic in sources.order to pick a YouTube video", 1)
         with conn:
             conn.execute("BEGIN IMMEDIATE")
             if not queue.pin(conn, track, source, ref):

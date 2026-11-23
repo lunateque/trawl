@@ -1,0 +1,62 @@
+{
+  "search": [
+    {
+      "username": "peer one",
+      "hasFreeUploadSlot": true,
+      "uploadSpeed": 1000000,
+      "files": [
+        {
+          "filename": "Shared\\The Band - The Album\\CD1\\01 First Song.flac",
+          "size": 111,
+          "bitRate": 410,
+          "length": 4,
+          "extension": "flac"
+        },
+        {
+          "filename": "Shared\\The Band - The Album\\CD 2\\01 Second Song.flac",
+          "size": 222,
+          "bitRate": 410,
+          "length": 4,
+          "extension": "flac"
+        },
+        {
+          "filename": "Shared\\The Band - The Album\\CD 2\\01 Second Song.mp3",
+          "size": 66,
+          "bitRate": 256,
+          "length": 4,
+          "extension": "mp3"
+        },
+        {
+          "filename": "Shared\\The Band - The Album\\log.log",
+          "size": 1
+        },
+        {
+          "filename": "Shared\\The Band - The Album\\preview.jpg",
+          "size": 1
+        },
+        {
+          "filename": "Shared\\Image\\album.flac",
+          "size": 222,
+          "bitRate": 410,
+          "length": 8,
+          "extension": "flac"
+        },
+        {
+          "filename": "Shared\\Image\\album.cue",
+          "size": 1
+        }
+      ],
+      "lockedFiles": [
+        {
+          "filename": "Shared\\The Band - The Album\\03 Locked.flac",
+          "size": 3
+        }
+      ]
+    }
+  ],
+  "transfers": {
+    "success": "Completed, Succeeded",
+    "error": "Completed, Errored",
+    "stall": "InProgress"
+  }
+}

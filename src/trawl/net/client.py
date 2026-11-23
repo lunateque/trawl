@@ -64,6 +64,20 @@ class HttpClient:
     async def post_form(self, url: str, data: Mapping[str, str]) -> Any:
         return self._json(await self._request("POST", url, data=data))
 
+    async def api_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        body: object = None,
+        params: Mapping[str, str] | None = None,
+    ) -> object:
+        response = await self._request(
+            method, url, params=params, json=body, request_headers=headers
+        )
+        return self._json(response) if response.content else None
+
     async def get_bytes(self, url: str) -> bytes:
         response = await self._request("GET", url, accept_encoding="identity")
         length = response.headers.get("Content-Length")
@@ -88,14 +102,24 @@ class HttpClient:
         params: Mapping[str, str] | None = None,
         data: Mapping[str, str] | None = None,
         accept_encoding: str | None = None,
+        json: object = None,
+        request_headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
         last = HttpError(url, None, "no HTTP attempts configured")
         for attempt in range(self._max_attempts):
             delay = None
             try:
-                headers = {"Accept-Encoding": accept_encoding} if accept_encoding else None
+                headers = (
+                    {"Accept-Encoding": accept_encoding} if accept_encoding else request_headers
+                )
                 response = await self._client.request(
-                    method, url, params=params, data=data, headers=headers
+                    method,
+                    url,
+                    params=params,
+                    data=data,
+                    headers=headers,
+                    json=json,
+                    follow_redirects=request_headers is None,
                 )
             except httpx.TransportError as exc:
                 last = HttpError(url, None, str(exc))

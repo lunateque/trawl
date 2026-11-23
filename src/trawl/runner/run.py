@@ -16,10 +16,13 @@ from trawl.db.states import Actor, transition
 from trawl.db.states import TrackState as State
 from trawl.library.layout import render, resolve_collision
 from trawl.library.place import cleanup_staging, place, staging_dir
+from trawl.library.repack import repack_needed
 from trawl.mb.client import MusicBrainzClient
 from trawl.mb.models import MbDataError, Release, Track, object_value
 from trawl.net.client import HttpClient, HttpError
-from trawl.runner.check import Checked, check
+from trawl.plan.import_folder import imported_folder
+from trawl.plan.switch import can_switch, switch_edition
+from trawl.runner.check import check, check_folder
 from trawl.runner.tools import AudioTools
 from trawl.sources.base import (
     Candidate,
@@ -31,9 +34,10 @@ from trawl.sources.base import (
     Source,
     SourceWall,
 )
-from trawl.sources.score import ALBUM_COVERAGE, coverage, match_items, release_tracks, score
-from trawl.tag.cover import Cover, fetch_cover
-from trawl.tag.lyrics import fetch_lyrics
+from trawl.sources.local import LocalSource, stage_file
+from trawl.sources.score import coverage, match_items, release_tracks, score
+from trawl.sources.soulseek import SoulseekSource
+from trawl.tag.album import AlbumTags
 from trawl.tag.mapping import fields_for
 from trawl.verify.fingerprint import AcoustId
 from trawl.verify.probe import LOSSLESS, AudioError
@@ -66,6 +70,7 @@ async def run_once(
     deps: RunDeps,
     *,
     only: int | None = None,
+    release_mbid: str | None = None,
 ) -> RunReport:
     if not secrets.acoustid_key:
         raise ValueError(
@@ -76,9 +81,13 @@ async def run_once(
     start = conn.execute("SELECT COALESCE(max(id),0) FROM attempts").fetchone()[0]
     groups = [
         list(rows)
-        for _, rows in groupby(queue.pending(conn, only), key=lambda row: row.release_mbid)
+        for _, rows in groupby(
+            queue.pending(conn, only, release_mbid=release_mbid), key=lambda row: row.release_mbid
+        )
     ]
-    limit = asyncio.Semaphore(cfg.sources.ytmusic_concurrency)
+    limit = asyncio.Semaphore(
+        max(cfg.sources.ytmusic_concurrency, cfg.sources.soulseek.concurrency)
+    )
 
     async def run_group(rows: list[Work]) -> None:
         async with limit:
@@ -101,6 +110,7 @@ class _Runner:
         self.deps = deps
         self.stage = staging_dir(cfg.library_root)
         self.releases: dict[str, Release] = {}
+        self.youtube = asyncio.Semaphore(cfg.sources.ytmusic_concurrency)
 
     def change(self, row: Work, state: State, **fields: object) -> bool:
         return transition(
@@ -121,7 +131,7 @@ class _Runner:
             self.releases[mbid] = await self.deps.mb.release(mbid)
         return self.releases[mbid]
 
-    async def release(self, rows: list[Work]) -> None:
+    async def release(self, rows: list[Work], *, allow_switch: bool = True) -> None:
         mbid = rows[0].release_mbid
         try:
             release = await self._get_release(mbid)
@@ -154,7 +164,12 @@ class _Runner:
                 await self.pinned(row, tracks[row.track_mbid])
                 del misses[row.track_mbid]
         if misses:
-            await self.search(release, tracks, misses)
+            selected = await self.search(release, tracks, misses, allow_switch=allow_switch)
+            if selected:
+                replacement = queue.pending(self.conn, release_mbid=selected.mbid)
+                if replacement:
+                    await self.release(replacement, allow_switch=False)
+                return
         ids = {row.id for row in rows}
         initial_pins = {row.id: row.pin for row in rows}
         # A pin written during an await takes precedence over the automatic result.
@@ -208,48 +223,135 @@ class _Runner:
                 next_try_at=None if pinned else queue.after(self.cfg.retry_missing_days * 86400),
             )
 
+    async def folder_candidates(
+        self,
+        source: LocalSource | SoulseekSource,
+        release: Release,
+        basis: list[Track],
+        misses: dict[str, Work],
+        album: bool,
+        allow_switch: bool,
+    ) -> tuple[Release | None, list[tuple[Candidate, dict[str, CandidateItem], bool]]]:
+        editions = [(release, basis)]
+        if allow_switch and can_switch(self.conn, release):
+            try:
+                others = await self.deps.mb.release_group_releases(release.release_group.mbid)
+                recordings = {track.recording_mbid for track in basis}
+                for other in others:
+                    if other.mbid == release.mbid:
+                        continue
+                    full = await self._get_release(other.mbid)
+                    tracks = release_tracks(full)
+                    if not album:
+                        tracks = [track for track in tracks if track.recording_mbid in recordings]
+                        if {track.recording_mbid for track in tracks} != recordings:
+                            continue
+                    if tracks:
+                        editions.append((full, tracks))
+            except (*_METADATA_ERRORS, KeyError) as exc:
+                log.warning("Cannot compare editions of %s: %s", release.mbid, exc)
+        threshold = self.cfg.sources.album_coverage if album else self.cfg.sources.track_coverage
+        matches = await source.find(release, editions, album=album, min_coverage=threshold)
+        current = [match for match in matches if match.release.mbid == release.mbid]
+        best = matches[0] if matches else None
+        if (
+            best
+            and best.release.mbid != release.mbid
+            and (not current or best.candidate.score > current[0].candidate.score)
+        ):
+            reason = f"{source.name} folder fits this edition better"
+            if switch_edition(
+                self.conn,
+                release,
+                best.release,
+                reason,
+                planning=self.cfg.plan,
+                searching={row.id for row in misses.values()},
+            ):
+                return best.release, []
+        return None, [(match.candidate, match.mapping, match.reliable) for match in current]
+
+    async def candidate_search(
+        self,
+        source: Source,
+        release: Release,
+        basis: list[Track],
+        album: bool,
+    ) -> list[tuple[Candidate, dict[str, CandidateItem], bool]]:
+        threshold = self.cfg.sources.album_coverage if album else self.cfg.sources.track_coverage
+        ranked: list[tuple[Candidate, dict[str, CandidateItem], bool]] = []
+        for candidate in await source.search(release, basis):
+            mapping = match_items(
+                basis, candidate.items, release if candidate.kind == "album" else None
+            )
+            if not mapping or coverage(basis, mapping) < threshold:
+                continue
+            reliable = (
+                candidate.kind == "album"
+                and candidate.official
+                and len(candidate.items) == release.track_count
+                and len(mapping) == len(basis)
+            )
+            ranked.append(
+                (replace(candidate, score=score(candidate, basis, mapping)), mapping, reliable)
+            )
+        return sorted(ranked, key=lambda entry: -entry[0].score)
+
     async def search(
-        self, release: Release, tracks: dict[str, Track], misses: dict[str, Work]
-    ) -> None:
+        self,
+        release: Release,
+        tracks: dict[str, Track],
+        misses: dict[str, Work],
+        *,
+        allow_switch: bool,
+    ) -> Release | None:
+        delayed: set[str] = set()
         tried: set[str] = set()
+        imports = imported_folder(self.conn, release)
+        for imported in imports:
+            source = LocalSource(
+                (),
+                move=self.cfg.sources.local.move,
+                lossless_repack=self.cfg.sources.lossless_repack,
+            )
+            todo = {key: item for key, item in imported.mapping.items() if key in misses}
+            if todo:
+                tried.update(todo)
+                await self.fetch(
+                    source, imported.candidate, todo, misses, tracks, imported.reliable
+                )
+            if not misses:
+                return None
         for source in self.deps.sources:
             if until := queue.pause_until(self.conn, source.name):
-                self.requeue(misses, until)
-                return
+                delayed.add(until)
+                continue
             targets = [tracks[mbid] for mbid in misses]
             album = any(row.album_scope for row in misses.values())
             basis = release_tracks(release) if album else targets
             try:
-                candidates = await source.search(release, basis)
-                ranked: list[tuple[Candidate, dict[str, CandidateItem]]] = []
-                for candidate in candidates:
-                    mapping = match_items(
-                        basis, candidate.items, release if candidate.kind == "album" else None
+                if isinstance(source, LocalSource | SoulseekSource):
+                    selected, ranked = await self.folder_candidates(
+                        source, release, basis, misses, album, allow_switch and not imports
                     )
-                    if not mapping or (album and coverage(basis, mapping) < ALBUM_COVERAGE):
-                        continue
-                    ranked.append(
-                        (replace(candidate, score=score(candidate, basis, mapping)), mapping)
-                    )
-                for candidate, mapping in sorted(ranked, key=lambda entry: -entry[0].score):
+                    if selected:
+                        return selected
+                elif source.name == "ytmusic":
+                    async with self.youtube:
+                        ranked = await self.candidate_search(source, release, basis, album)
+                else:
+                    ranked = await self.candidate_search(source, release, basis, album)
+                for candidate, mapping, reliable in ranked:
                     if until := queue.pause_until(self.conn, source.name):
-                        self.requeue(misses, until)
-                        return
+                        delayed.add(until)
+                        break
                     todo = {mbid: item for mbid, item in mapping.items() if mbid in misses}
                     if not todo:
                         continue
                     tried.update(todo)
-                    reliable = (
-                        candidate.kind == "album"
-                        and len(mapping) == len(basis)
-                        and (
-                            album
-                            or (candidate.official and len(candidate.items) == release.track_count)
-                        )
-                    )
                     await self.fetch(source, candidate, todo, misses, tracks, reliable)
                     if not misses:
-                        return
+                        return None
             except SourceWall as exc:
                 with self.conn:
                     until = queue.wall(self.conn, source.name, exc.reason)
@@ -257,8 +359,7 @@ class _Runner:
                         queue.attempt(
                             self.conn, row.id, source.name, None, None, "fetch_failed", exc.reason
                         )
-                self.requeue(misses, until)
-                return
+                delayed.add(until)
             except (FetchError, MbDataError, OSError) as exc:
                 with self.conn:
                     for mbid, row in misses.items():
@@ -266,19 +367,23 @@ class _Runner:
                         queue.attempt(
                             self.conn, row.id, source.name, None, None, "fetch_failed", str(exc)
                         )
+        if delayed:
+            self.requeue(misses, min(delayed))
+            return None
         for mbid, row in misses.items():
             if mbid not in tried:
                 with self.conn:
                     queue.attempt(
                         self.conn,
                         row.id,
-                        "ytmusic",
+                        self.deps.sources[-1].name if self.deps.sources else "local",
                         None,
                         None,
                         "no_candidates",
                         "no eligible source candidates",
                     )
             self.missing(row)
+        return None
 
     async def pinned(self, row: Work, track: Track) -> None:
         pin = object_value(json.loads(row.pin or "{}"))
@@ -296,9 +401,17 @@ class _Runner:
             (CandidateItem(ref, None, track.length_ms, track.title),),
         )
         if name == "path":
-            source: Source = _LocalPin(self.deps.tools)
+            source: Source = _LocalPin(self.deps.tools, self.cfg.sources.lossless_repack)
         else:
-            source = next(source for source in self.deps.sources if source.name == name)
+            selected = next((source for source in self.deps.sources if source.name == name), None)
+            if selected is None:
+                with self.conn:
+                    queue.attempt(
+                        self.conn, row.id, name, ref, None, "fetch_failed", "source not configured"
+                    )
+                self.missing(row, pinned=True)
+                return
+            source = selected
         try:
             if until := queue.pause_until(self.conn, source.name):
                 self.requeue(remaining, until)
@@ -330,10 +443,19 @@ class _Runner:
         reliable: bool,
     ) -> None:
         limited = replace(candidate, items=tuple(todo.values()))
+        fetcher = (
+            LocalSource(source.inbox, lossless_repack=source.lossless_repack)
+            if isinstance(source, LocalSource) and source.move
+            else source
+        )
         issues: dict[str, FetchIssue] = {}
         wall: SourceWall | None = None
         try:
-            files = await source.fetch(limited, self.workspace())
+            if source.name == "ytmusic":
+                async with self.youtube:
+                    files = await source.fetch(limited, self.workspace())
+            else:
+                files = await fetcher.fetch(limited, self.workspace())
         except PartialFetchError as exc:
             files, issues, wall = exc.files, exc.issues, exc.wall
         except (FetchError, OSError, AudioError) as exc:
@@ -358,7 +480,7 @@ class _Runner:
         by_ref: dict[str, deque[Fetched]] = defaultdict(deque)
         for file in files:
             by_ref[file.item_ref].append(file)
-        checks: dict[str, Checked] = {}
+        selected: dict[str, Fetched] = {}
         for mbid, item in todo.items():
             row = misses[mbid]
             if not (fetched := by_ref.get(item.ref)):
@@ -376,7 +498,35 @@ class _Runner:
                             issue.reason if issue else "file not downloaded",
                         )
                 continue
-            file = fetched.popleft()
+            selected[mbid] = fetched.popleft()
+        if candidate.kind == "album" and isinstance(source, LocalSource | SoulseekSource):
+            checked_files = await check_folder(
+                {key: tracks[key] for key in todo},
+                selected,
+                reliable,
+                self.deps.acoustid,
+                self.deps.mb,
+                self.cfg.acoustid_min_score,
+                self.deps.tools,
+            )
+        else:
+            checked_files = {}
+            for key, file in selected.items():
+                checked_files[key] = (
+                    file,
+                    await check(
+                        tracks[key],
+                        file.path,
+                        reliable,
+                        self.deps.acoustid,
+                        self.deps.mb,
+                        self.cfg.acoustid_min_score,
+                        self.deps.tools,
+                    ),
+                )
+        mismatch = any(checked.mismatch for _, checked in checked_files.values())
+        for mbid, (file, checked) in checked_files.items():
+            row = misses[mbid]
             with self.conn:
                 if not self.change(
                     row,
@@ -388,18 +538,7 @@ class _Runner:
                     lossless=file.lossless,
                 ):
                     continue
-            checks[mbid] = await check(
-                tracks[mbid],
-                file.path,
-                reliable,
-                self.deps.acoustid,
-                self.deps.mb,
-                self.cfg.acoustid_min_score,
-                self.deps.tools,
-            )
-        mismatch = any(result.mismatch for result in checks.values())
-        for mbid, checked in checks.items():
-            row = replace(misses[mbid], state=State.FETCHED)
+            row = replace(row, state=State.FETCHED)
             decision = checked.with_folder_guard(mismatch)
             with self.conn:
                 if decision.accept:
@@ -417,21 +556,23 @@ class _Runner:
                         self.conn,
                         row.id,
                         source.name,
-                        todo[mbid].ref,
+                        file.item_ref,
                         candidate.score,
                         decision.outcome,
                         decision.reason,
                     )
+            if decision.accept and changed and isinstance(source, LocalSource) and source.move:
+                try:
+                    await asyncio.to_thread(Path(file.item_ref).unlink)
+                except OSError as exc:
+                    log.warning("Cannot remove local original %s: %s", file.item_ref, exc)
             if decision.accept or not changed:
                 del misses[mbid]
         if wall is not None:
             raise wall
 
     async def finish(self, release: Release, tracks: dict[str, Track], ids: set[int]) -> None:
-        cover: Cover | None = None
-        cover_loaded = False
-        artist_genres: tuple[str, ...] = ()
-        genres_loaded = False
+        tags = AlbumTags(self.cfg, self.deps.http, self.deps.mb, self.deps.tools, release)
         for row in queue.pending(self.conn, release_mbid=release.mbid):
             if (
                 row.id not in ids
@@ -444,48 +585,13 @@ class _Runner:
             path = row.path
             try:
                 if row.state == State.VERIFIED:
-                    if not cover_loaded:
-                        cover = await fetch_cover(
-                            self.deps.http, release.mbid, release.release_group.mbid
-                        )
-                        cover_loaded = True
-                    if not genres_loaded and not release.genres and release.credits:
-                        artist_genres = await self.deps.mb.artist_genres(
-                            release.credits[0].artist_mbid
-                        )
-                        genres_loaded = True
-                fields = fields_for(release, track, self.cfg.genres, artist_genres)
-                if row.state == State.VERIFIED:
-                    lyrics = None
-                    if self.cfg.lyrics_enabled:
-                        ms = track.length_ms
-                        if ms is None:
-                            ms = (await asyncio.to_thread(self.deps.tools.probe, path)).duration_ms
-                        lyrics = await fetch_lyrics(
-                            self.deps.http,
-                            fields.artist,
-                            fields.title,
-                            fields.album,
-                            round(ms / 1000),
-                        )
-                    await asyncio.to_thread(
-                        self.deps.tools.write,
-                        path,
-                        fields,
-                        cover.embed if cover else None,
-                        lyrics.embedded if lyrics else None,
-                    )
-                    if lyrics and lyrics.synced:
-                        await asyncio.to_thread(
-                            path.with_suffix(".lrc").write_text, lyrics.synced, encoding="utf-8"
-                        )
-                    if cover:
-                        await asyncio.to_thread((path.parent / "cover.jpg").write_bytes, cover.full)
-                    await asyncio.to_thread(self.deps.tools.track_gain, path)
+                    fields = await tags.write(path, track)
                     with self.conn:
                         if not self.change(row, State.TAGGED):
                             continue
                     row = replace(row, state=State.TAGGED)
+                else:
+                    fields = fields_for(release, track, self.cfg.genres, ())
                 relative = render(self.cfg.template, fields, path.suffix, len(release.media))
                 self.place(row, relative)
             except (*_METADATA_ERRORS, AudioError) as exc:
@@ -558,14 +664,27 @@ class _Runner:
 class _LocalPin:
     name = "path"
 
-    def __init__(self, tools: AudioTools) -> None:
+    def __init__(self, tools: AudioTools, lossless_repack: bool) -> None:
         self.tools = tools
+        self.lossless_repack = lossless_repack
 
     async def search(self, release: Release, tracks: list[Track]) -> list[Candidate]:
         return []
 
     async def fetch(self, candidate: Candidate, into: Path) -> list[Fetched]:
         original = Path(candidate.ref)
+        if repack_needed(original):
+            return [
+                await asyncio.to_thread(
+                    stage_file,
+                    candidate.ref,
+                    original,
+                    into,
+                    0,
+                    move=False,
+                    lossless_repack=self.lossless_repack,
+                )
+            ]
         path = into / f"audio{original.suffix}"
         await asyncio.to_thread(shutil.copyfile, original, path)
         audio = await asyncio.to_thread(self.tools.probe, path)
