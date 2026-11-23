@@ -6,20 +6,14 @@ from typing import cast
 
 import mutagen  # pyright: ignore[reportMissingTypeStubs]
 
-from trawl.library.place import is_link, linked_ancestor, unlink_regular
+from trawl.core.audio import AUDIO_EXTS, LOSSLESS
+from trawl.core.catalog import Release, Track, credit_string
+from trawl.core.fetch import Candidate, Fetched, FetchError, FetchIssue, PartialFetchError
+from trawl.core.normalize import norm_artist, norm_title
+from trawl.core.paths import is_link, linked_ancestor, unlink_regular
 from trawl.library.repack import repack, repack_needed
-from trawl.mb.models import Release, Track, credit_string
-from trawl.normalize import norm_artist, norm_title
-from trawl.sources.base import Candidate, Fetched, FetchError, FetchIssue, PartialFetchError
-from trawl.sources.folder import (
-    AUDIO_EXTS,
-    Folder,
-    FolderFile,
-    FolderMatch,
-    disc_number,
-    rank_folders,
-)
-from trawl.verify.probe import LOSSLESS, AudioError, probe
+from trawl.sources.folder import Folder, FolderFile, FolderMatch, disc_number, rank_folders
+from trawl.verify.probe import AudioError, probe
 
 
 def scan_folder(root: Path) -> list[tuple[FolderFile, Path]]:

@@ -9,8 +9,10 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from trawl import cli
-from trawl.config import Config, ProxyConfig
+from trawl.cli import add as add_command
+from trawl.cli import app
+from trawl.cli import plan as plan_command
+from trawl.config.models import Config, ProxyConfig
 from trawl.db.connect import open_db
 from trawl.mb.client import MusicBrainzClient
 from trawl.net.client import HttpClient
@@ -52,17 +54,18 @@ def test_add_plan_status_explain(
         finally:
             await http.aclose()
 
-    monkeypatch.setattr(cli, "make_mb", make_mb)
+    monkeypatch.setattr(add_command, "make_mb", make_mb)
+    monkeypatch.setattr(plan_command, "make_mb", make_mb)
     args = ["--config", str(config)]
-    added = runner.invoke(cli.app, [*args, "add", f"https://musicbrainz.org/release/{MULTI}"])
+    added = runner.invoke(app, [*args, "add", f"https://musicbrainz.org/release/{MULTI}"])
     assert added.exit_code == 0, added.output
     assert "Want 1" in added.output
     assert calls == []
-    planned = runner.invoke(cli.app, [*args, "plan"])
+    planned = runner.invoke(app, [*args, "plan"])
     assert planned.exit_code == 0, planned.output
     assert "12 tracks" in planned.output
     assert calls == [f"/ws/2/release/{MULTI}"]
-    status = runner.invoke(cli.app, [*args, "status"])
+    status = runner.invoke(app, [*args, "status"])
     assert status.exit_code == 0, status.output
     assert all(text in status.output for text in ("planned", "12", "manual", "Unresolved: 0"))
     with closing(open_db(config.parent / "data" / "trawl.sqlite")) as db, db:
@@ -71,7 +74,7 @@ def test_add_plan_status_explain(
             VALUES (1,'test','reference','fetch_failed','failure reason','2026-11-23T08:00:00Z')"""
         )
     for target in ("1", MULTI, f"https://musicbrainz.org/release/{MULTI}"):
-        explanation = runner.invoke(cli.app, [*args, "explain", target])
+        explanation = runner.invoke(app, [*args, "explain", target])
         assert explanation.exit_code == 0, explanation.output
         assert all(
             text in explanation.output
@@ -108,15 +111,16 @@ def test_text_selection(
         finally:
             await http.aclose()
 
-    monkeypatch.setattr(cli, "make_mb", make_mb)
+    monkeypatch.setattr(add_command, "make_mb", make_mb)
+    monkeypatch.setattr(plan_command, "make_mb", make_mb)
     args = ["--config", str(config), "add"]
-    kino = runner.invoke(cli.app, [*args, "Кино"])
+    kino = runner.invoke(app, [*args, "Кино"])
     assert kino.exit_code == 0, kino.output
     assert "Want 1" in kino.output
-    cancelled = runner.invoke(cli.app, [*args, "Radiohead - OK Computer"], input="0\n")
+    cancelled = runner.invoke(app, [*args, "Radiohead - OK Computer"], input="0\n")
     assert cancelled.exit_code == 0, cancelled.output
     assert "Cancelled" in cancelled.output and "89" in cancelled.output
-    yes = runner.invoke(cli.app, [*args, "Radiohead - OK Computer", "--yes"])
+    yes = runner.invoke(app, [*args, "Radiohead - OK Computer", "--yes"])
     assert yes.exit_code == 0, yes.output
     assert "Want 2" in yes.output
     with closing(open_db(config.parent / "data" / "trawl.sqlite")) as db:
@@ -125,7 +129,7 @@ def test_text_selection(
 
 
 def test_invalid_foreign_link_is_rejected_without_configuration() -> None:
-    result = CliRunner().invoke(cli.app, ["add", "https://open.spotify.com/unknown"])
+    result = CliRunner().invoke(app, ["add", "https://open.spotify.com/unknown"])
     assert result.exit_code == 2
     assert "Invalid Spotify link" in result.output
 
@@ -135,9 +139,9 @@ def test_doctor_offline(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         assert timeout == 5
         raise FileNotFoundError(name)
 
-    monkeypatch.setattr("trawl.doctor.command", missing)
-    monkeypatch.setattr("trawl.doctor.supports_opus", lambda: False)
-    result = CliRunner().invoke(cli.app, ["--config", str(config), "doctor", "--offline"])
+    monkeypatch.setattr("trawl.cli.doctor.command", missing)
+    monkeypatch.setattr("trawl.cli.doctor.supports_opus", lambda: False)
+    result = CliRunner().invoke(app, ["--config", str(config), "doctor", "--offline"])
     assert result.exit_code == 1, result.output
     assert all(
         text in result.output
@@ -173,9 +177,9 @@ def test_doctor_reports_proxy_and_probes_caa(
             proxy_transport=transport("proxy"),
         )
 
-    monkeypatch.setattr("trawl.doctor.HttpClient", factory)
+    monkeypatch.setattr("trawl.cli.doctor.HttpClient", factory)
     args = ["--config", str(config), "doctor"] + (["--offline"] if offline else [])
-    result = CliRunner().invoke(cli.app, args, env={"COLUMNS": "160"})
+    result = CliRunner().invoke(app, args, env={"COLUMNS": "160"})
     assert "http://proxy.test:8888" in result.output
     assert "Cover Art Archive" in result.output
     assert seen == (
@@ -192,6 +196,6 @@ def test_bad_config_exits_with_dotted_key(config: Path) -> None:
     with config.open("a", encoding="utf-8") as stream:
         stream.write("\n[plan]\nprefr = 'original'\n")
     for command in (["status"], ["doctor", "--offline"]):
-        result = CliRunner().invoke(cli.app, ["--config", str(config), *command])
+        result = CliRunner().invoke(app, ["--config", str(config), *command])
         assert result.exit_code == 1, result.output
         assert "plan.prefr" in result.output

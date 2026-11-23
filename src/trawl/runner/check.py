@@ -1,17 +1,16 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from trawl.core.audio import AudioTools, Probe, within_duration
+from trawl.core.catalog import MbDataError, Track
+from trawl.core.fetch import Fetched
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import MbDataError, Track
 from trawl.net.client import HttpError
-from trawl.runner.tools import AudioTools
-from trawl.sources.base import Fetched
-from trawl.sources.score import within_duration
 from trawl.verify.fingerprint import AcoustId, AcoustResult
 from trawl.verify.policy import Decision, decide, recording_ids
-from trawl.verify.probe import AudioError, Probe
+from trawl.verify.probe import AudioError
 
 
 @dataclass(frozen=True)
@@ -134,6 +133,50 @@ async def evaluate(
         )
 
 
+async def _fingerprint_matches(
+    key: str,
+    item: Evidence,
+    tracks: Mapping[str, Track],
+    results: Mapping[str, tuple[Fetched, Checked]],
+    reliable: bool,
+    mb: MusicBrainzClient,
+    min_score: float,
+) -> list[tuple[str, Track]]:
+    ids = recording_ids(item.hits, min_score)
+    matches = [
+        (dest, track)
+        for dest, track in tracks.items()
+        if dest not in results
+        and track.recording_mbid in ids
+        and item.audio
+        and within_duration(track.length_ms, item.audio.duration_ms)
+    ]
+    if len(matches) > 1:
+        matches = [match for match in matches if match[0] == key]
+    if not matches and ids:
+        for dest, track in tracks.items():
+            if (
+                dest not in results
+                and item.audio
+                and within_duration(track.length_ms, item.audio.duration_ms)
+            ):
+                checked = await evaluate(track, item, reliable, mb, min_score)
+                if checked.decision.verified_by == "acoustid":
+                    matches.append((dest, track))
+    return matches
+
+
+def _folder_mismatch(
+    results: Mapping[str, tuple[Fetched, Checked]], leftovers: Iterable[Evidence], min_score: float
+) -> bool:
+    mismatch = any(checked.decision.outcome == "rejected_verify" for _, checked in results.values())
+    return mismatch or any(
+        (item.error is not None and item.error.decision.outcome == "rejected_verify")
+        or recording_ids(item.hits, min_score)
+        for item in leftovers
+    )
+
+
 async def check_folder(
     tracks: Mapping[str, Track],
     files: Mapping[str, Fetched],
@@ -147,27 +190,7 @@ async def check_folder(
     claimed: set[str] = set()
     results: dict[str, tuple[Fetched, Checked]] = {}
     for key, item in evidence.items():
-        ids = recording_ids(item.hits, min_score)
-        matches = [
-            (dest, track)
-            for dest, track in tracks.items()
-            if dest not in results
-            and track.recording_mbid in ids
-            and item.audio
-            and within_duration(track.length_ms, item.audio.duration_ms)
-        ]
-        if len(matches) > 1:
-            matches = [match for match in matches if match[0] == key]
-        if not matches and ids:
-            for dest, track in tracks.items():
-                if (
-                    dest not in results
-                    and item.audio
-                    and within_duration(track.length_ms, item.audio.duration_ms)
-                ):
-                    checked = await evaluate(track, item, reliable, mb, min_score)
-                    if checked.decision.verified_by == "acoustid":
-                        matches.append((dest, track))
+        matches = await _fingerprint_matches(key, item, tracks, results, reliable, mb, min_score)
         if len(matches) == 1:
             dest, track = matches[0]
             if dest not in results:
@@ -189,12 +212,7 @@ async def check_folder(
         item = evidence[key]
         checked = await evaluate(tracks[dest], item, False, mb, min_score)
         results[dest] = files[key], checked
-    mismatch = any(checked.decision.outcome == "rejected_verify" for _, checked in results.values())
-    if mismatch or any(
-        (item.error is not None and item.error.decision.outcome == "rejected_verify")
-        or recording_ids(item.hits, min_score)
-        for item in (evidence[key] for key in displaced[len(remaining) :])
-    ):
+    if _folder_mismatch(results, (evidence[key] for key in displaced[len(remaining) :]), min_score):
         return {
             key: (file, Checked(checked.with_folder_guard(True), checked.mismatch))
             for key, (file, checked) in results.items()

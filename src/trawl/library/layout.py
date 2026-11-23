@@ -3,7 +3,7 @@ from collections.abc import Callable
 from pathlib import PurePath
 from string import Formatter
 
-from trawl.tag.mapping import TagFields
+from trawl.core.tags import TagFields
 
 _COMPONENT_LIMIT = 120
 _PATH_LIMIT = 240

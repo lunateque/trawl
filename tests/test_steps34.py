@@ -11,7 +11,8 @@ from conftest import mbid
 from mutagen.flac import FLAC  # pyright: ignore[reportMissingTypeStubs]
 from typer.testing import CliRunner
 
-from trawl import cli
+from trawl.cli import app, context
+from trawl.cli import run as cli
 from trawl.db.connect import open_db
 from trawl.net.client import HttpClient
 from trawl.sources.ytmusic import YtDlpDownloader
@@ -101,12 +102,101 @@ def _install_transport(
         return HttpClient(agent, {}, transport=httpx.MockTransport(handle), max_attempts=1)
 
     monkeypatch.setattr(cli, "HttpClient", factory)
+    monkeypatch.setattr(context, "HttpClient", factory)
 
 
 def _invoke(config: Path, *args: str) -> str:
-    result = CliRunner().invoke(cli.app, ["--config", str(config), *args])
+    result = CliRunner().invoke(app, ["--config", str(config), *args])
     assert result.exit_code == 0, (result.output, result.exception)
     return result.output
+
+
+def _slskd_response(
+    request: httpx.Request,
+    release: dict[str, object],
+    can_download: bool,
+    peer: PureWindowsPath,
+    flacs: dict[str, Path],
+    requests: dict[str, int],
+    root: Path,
+) -> httpx.Response:
+    path = request.url.path
+    if request.url.host == "coverartarchive.org":
+        return httpx.Response(404)
+    if path == f"/ws/2/release/{RELEASE}":
+        return httpx.Response(200, json=release)
+    if path == "/ws/2/release":
+        assert request.url.params["release-group"] == GROUP
+        return httpx.Response(200, json={"releases": [release], "release-count": 1})
+    assert request.url.host == "slskd.test" and request.headers["X-API-Key"] == "fixture"
+    if path == "/api/v0/searches":
+        if not can_download:
+            return httpx.Response(401)
+        assert json.loads(request.content)["searchText"] == "The Band The Album"
+        return httpx.Response(201)
+    if path.endswith("/responses"):
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "username": "peer",
+                    "hasFreeUploadSlot": True,
+                    "uploadSpeed": 42,
+                    "files": [
+                        {
+                            "filename": filename,
+                            "size": src.stat().st_size,
+                            "length": 4,
+                            "extension": "flac",
+                        }
+                        for filename, src in flacs.items()
+                    ]
+                    + [
+                        {
+                            "filename": str(peer / name),
+                            "size": 100,
+                            "extension": name.split(".")[1],
+                        }
+                        for name in ("rip.log", "cover.jpg")
+                    ],
+                }
+            ],
+        )
+    if "/searches/" in path:
+        return (
+            httpx.Response(204)
+            if request.method == "DELETE"
+            else httpx.Response(200, json={"isComplete": True})
+        )
+    assert path == "/api/v0/transfers/downloads/peer"
+    if request.method == "POST":
+        requests.update((row["filename"], row["size"]) for row in json.loads(request.content))
+        assert set(requests) == set(flacs)
+        for filename, size in requests.items():
+            remote, src = PureWindowsPath(filename), flacs[filename]
+            dest = root / "download" / remote.parent.name / remote.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            assert src.stat().st_size == size
+            shutil.copyfile(src, dest)
+        return httpx.Response(201)
+    return httpx.Response(
+        200,
+        json={
+            "directories": [
+                {
+                    "files": [
+                        {
+                            "id": str(i),
+                            "filename": name,
+                            "state": "Completed, Succeeded",
+                            "bytesTransferred": size,
+                        }
+                        for i, (name, size) in enumerate(requests.items())
+                    ]
+                }
+            ]
+        },
+    )
 
 
 @pytest.mark.tools
@@ -127,85 +217,6 @@ def test_slskd_two_disc_album_and_cli_upgrade(
     opus = tmp_path / "yt.opus"
     _audio(opus, "libopus", 4, 440)
     can_download = scenario == "direct"
-
-    def handle(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if request.url.host == "coverartarchive.org":
-            return httpx.Response(404)
-        if path == f"/ws/2/release/{RELEASE}":
-            return httpx.Response(200, json=release)
-        if path == "/ws/2/release":
-            assert request.url.params["release-group"] == GROUP
-            return httpx.Response(200, json={"releases": [release], "release-count": 1})
-        assert request.url.host == "slskd.test" and request.headers["X-API-Key"] == "fixture"
-        if path == "/api/v0/searches":
-            if not can_download:
-                return httpx.Response(401)
-            assert json.loads(request.content)["searchText"] == "The Band The Album"
-            return httpx.Response(201)
-        if path.endswith("/responses"):
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "username": "peer",
-                        "hasFreeUploadSlot": True,
-                        "uploadSpeed": 42,
-                        "files": [
-                            {
-                                "filename": filename,
-                                "size": src.stat().st_size,
-                                "length": 4,
-                                "extension": "flac",
-                            }
-                            for filename, src in flacs.items()
-                        ]
-                        + [
-                            {
-                                "filename": str(peer / name),
-                                "size": 100,
-                                "extension": name.split(".")[1],
-                            }
-                            for name in ("rip.log", "cover.jpg")
-                        ],
-                    }
-                ],
-            )
-        if "/searches/" in path:
-            return (
-                httpx.Response(204)
-                if request.method == "DELETE"
-                else httpx.Response(200, json={"isComplete": True})
-            )
-        assert path == "/api/v0/transfers/downloads/peer"
-        if request.method == "POST":
-            requests.update((row["filename"], row["size"]) for row in json.loads(request.content))
-            assert set(requests) == set(flacs)
-            for filename, size in requests.items():
-                remote, src = PureWindowsPath(filename), flacs[filename]
-                dest = tmp_path / "download" / remote.parent.name / remote.name
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                assert src.stat().st_size == size
-                shutil.copyfile(src, dest)
-            return httpx.Response(201)
-        return httpx.Response(
-            200,
-            json={
-                "directories": [
-                    {
-                        "files": [
-                            {
-                                "id": str(i),
-                                "filename": name,
-                                "state": "Completed, Succeeded",
-                                "bytesTransferred": size,
-                            }
-                            for i, (name, size) in enumerate(requests.items())
-                        ]
-                    }
-                ]
-            },
-        )
 
     def search(_: object, query: str, filter: str) -> list[dict[str, str]]:
         assert (
@@ -229,7 +240,10 @@ def test_slskd_two_disc_album_and_cli_upgrade(
     def get_lossy(_: YtDlpDownloader, video_id: str, into: Path) -> Path:
         return Path(shutil.copyfile(opus, into / f"{video_id}.opus"))
 
-    _install_transport(monkeypatch, handle)
+    _install_transport(
+        monkeypatch,
+        lambda req: _slskd_response(req, release, can_download, peer, flacs, requests, tmp_path),
+    )
     monkeypatch.setattr(cli.YTMusic, "search", search)
     monkeypatch.setattr(cli.YTMusic, "get_album", get_album)
     monkeypatch.setattr(YtDlpDownloader, "download", get_lossy)

@@ -1,6 +1,6 @@
 import pytest
 
-from trawl.normalize import norm_artist, norm_title
+from trawl.core.normalize import norm_artist, norm_title
 
 
 @pytest.mark.parametrize(

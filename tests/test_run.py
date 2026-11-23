@@ -9,15 +9,41 @@ from conftest import mbid
 from mutagen.flac import FLAC  # pyright: ignore[reportMissingTypeStubs]
 from ytmusicapi import YTMusic  # pyright: ignore[reportMissingTypeStubs]
 
-from trawl.config import Config, MbConfig, PlanConfig, Secrets
+from trawl.config.models import Config, MbConfig, PlanConfig, Secrets
+from trawl.core.catalog import Credit, Medium, Release, ReleaseGroupRef, Track
 from trawl.db import repo
 from trawl.db.connect import open_db
 from trawl.db.repo import Kind, Origin, Scope
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import Credit, Medium, Release, ReleaseGroupRef, Track
 from trawl.net.client import HttpClient
 from trawl.plan.run import plan_new_wants
 from trawl.plan.wants import create_want
+
+
+def _album_response(
+    request: httpx.Request, expected_recordings: list[str | None], jpeg: bytes
+) -> httpx.Response:
+    if request.url.host == "api.acoustid.org":
+        assert request.method == "POST"
+        assert b"meta=recordingids" in request.content
+        recording = expected_recordings.pop(0)
+        if recording is None:
+            return httpx.Response(200, json={"status": "ok", "results": []})
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "results": [{"score": 0.99, "recordings": [{"id": recording}]}],
+            },
+        )
+    if request.url.host == "coverartarchive.org":
+        return httpx.Response(200, content=jpeg)
+    if request.url.host == "lrclib.net":
+        return httpx.Response(200, json={"plainLyrics": "Hello", "syncedLyrics": "[00:01.00]Hello"})
+    assert request.url.path in {f"/ws/2/recording/{mbid(label)}" for label in ("other", "expected")}
+    return httpx.Response(
+        200, json={"id": request.url.path.rsplit("/", 1)[-1], "title": "Recording"}
+    )
 
 
 @pytest.mark.tools
@@ -32,7 +58,8 @@ async def test_plan_to_library_reuse_and_rejection(
     single_fallback: bool,
     confirmed: bool,
 ) -> None:
-    from trawl.runner.run import RunDeps, run_once
+    from trawl.runner.context import RunDeps
+    from trawl.runner.run import run_once
     from trawl.sources.ytmusic import YTMusicSource
     from trawl.verify.fingerprint import AcoustId
 
@@ -105,36 +132,11 @@ async def test_plan_to_library_reuse_and_rejection(
             ],
         }
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "api.acoustid.org":
-            assert request.method == "POST"
-            assert b"meta=recordingids" in request.content
-            recording = expected_recordings.pop(0)
-            if recording is None:
-                return httpx.Response(200, json={"status": "ok", "results": []})
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ok",
-                    "results": [{"score": 0.99, "recordings": [{"id": recording}]}],
-                },
-            )
-        if request.url.host == "coverartarchive.org":
-            return httpx.Response(200, content=jpeg)
-        if request.url.host == "lrclib.net":
-            return httpx.Response(
-                200, json={"plainLyrics": "Hello", "syncedLyrics": "[00:01.00]Hello"}
-            )
-        assert request.url.path in {
-            f"/ws/2/recording/{mbid(label)}" for label in ("other", "expected")
-        }
-        return httpx.Response(
-            200, json={"id": request.url.path.rsplit("/", 1)[-1], "title": "Recording"}
-        )
-
     monkeypatch.setattr(YTMusic, "search", search)
     monkeypatch.setattr(YTMusic, "get_album", get_album)
-    http = HttpClient("test", {}, httpx.MockTransport(handler))
+    http = HttpClient(
+        "test", {}, httpx.MockTransport(lambda req: _album_response(req, expected_recordings, jpeg))
+    )
     try:
         with closing(open_db(cfg.data_dir / "trawl.sqlite")) as conn:
             mb = MusicBrainzClient(http, conn, 30)

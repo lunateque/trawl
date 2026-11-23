@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 
-from trawl.mb.models import object_value
+from trawl.core.catalog import object_value
 from trawl.net.client import HttpClient, HttpError
 
 _TIMESTAMP = re.compile(r"\[\d+:\d+(?:\.\d+)?\]")

@@ -10,16 +10,17 @@ from yt_dlp import YoutubeDL  # pyright: ignore[reportMissingTypeStubs]
 from yt_dlp.utils import PostProcessingError  # pyright: ignore[reportMissingTypeStubs]
 from ytmusicapi import YTMusic  # pyright: ignore[reportMissingTypeStubs]
 
+from trawl.core.audio import Probe
+from trawl.core.catalog import Credit, Medium, Release, ReleaseGroupRef, Track, object_value
+from trawl.core.fetch import Candidate, CandidateItem, FetchError, PartialFetchError
+from trawl.core.youtube import video_id
 from trawl.library.layout import render, resolve_collision, safe_name
-from trawl.mb.models import Credit, Medium, Release, ReleaseGroupRef, Track, object_value
 from trawl.runner.lock import LockBusy, acquire
-from trawl.sources.base import Candidate, CandidateItem, FetchError, PartialFetchError
 from trawl.sources.score import match_items, score
-from trawl.sources.ytmusic import CopyAudio, YtDlpDownloader, YTMusicSource, is_wall, video_id
+from trawl.sources.ytmusic import CopyAudio, YtDlpDownloader, YTMusicSource, is_wall
 from trawl.tag.mapping import fields_for
 from trawl.verify.fingerprint import AcoustResult
 from trawl.verify.policy import decide
-from trawl.verify.probe import Probe
 
 _CREDIT = Credit("The Strokes", "artist", "")
 _TRACK = Track("track", "recording", 1, "1", "Last Nite", 194_000, (_CREDIT,), ())

@@ -9,7 +9,7 @@ from conftest import mbid
 from typer.testing import CliRunner
 
 from trawl.cli import app
-from trawl.config import Config
+from trawl.config.models import Config
 from trawl.db.connect import open_db
 from trawl.mb.client import MusicBrainzClient
 from trawl.net.client import HttpClient
@@ -117,7 +117,7 @@ def test_youtube_add_resolves_playlist_tracks(
             await http.aclose()
 
     monkeypatch.setattr("trawl.taste.links.YTMusic", YouTube)
-    monkeypatch.setattr("trawl.cli.make_mb", musicbrainz)
+    monkeypatch.setattr("trawl.cli.add.make_mb", musicbrainz)
     cmd = ["--config", str(cfg), "add", "https://music.youtube.com/playlist?list=PLfixture"]
     first = CliRunner().invoke(app, cmd)
     assert first.exit_code == 0, first.output

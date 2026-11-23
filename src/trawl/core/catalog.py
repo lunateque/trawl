@@ -269,3 +269,17 @@ class ArtistRef:
             _optional_text(data.get("sort-name")) or name,
             _integer(data.get("score")),
         )
+
+
+def release_tracks(release: Release) -> list[Track]:
+    return [
+        track
+        for medium in release.media
+        for track in medium.tracks
+        if track.position > 0 and track.number != "0"
+    ]
+
+
+def medium_rank(release: Release) -> int:
+    format_name = release.media[0].format if release.media else None
+    return 0 if format_name == "Digital Media" else 1 if format_name == "CD" else 2

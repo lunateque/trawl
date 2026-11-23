@@ -8,10 +8,10 @@ from test_folder_sources import album
 from typer.testing import CliRunner
 
 from trawl.cli import app
+from trawl.core.catalog import Track
 from trawl.db import repo
 from trawl.db.connect import open_db
 from trawl.db.repo import Kind, Origin, Scope
-from trawl.mb.models import Track
 from trawl.plan.switch import switch_edition
 from trawl.plan.wants import create_want
 

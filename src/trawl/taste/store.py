@@ -3,7 +3,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from trawl.config import Config
+from trawl.config.models import Config
 from trawl.db import queue, repo
 from trawl.db.repo import Kind, Origin, Scope
 from trawl.mb.client import MusicBrainzClient

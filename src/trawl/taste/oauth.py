@@ -13,7 +13,7 @@ from pathlib import Path
 from tomllib import loads
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from trawl.config import ConfigError
+from trawl.config.models import ConfigError
 from trawl.net.client import HttpClient
 from trawl.taste.spotify import spotify_token, text
 

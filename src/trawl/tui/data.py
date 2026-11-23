@@ -3,7 +3,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from trawl.config import Config
+from trawl.config.models import Config
 from trawl.db import queue, repo, review
 from trawl.db.states import TrackState
 

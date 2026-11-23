@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from trawl.mb.models import (
+from trawl.core.catalog import (
     ArtistRef,
     Credit,
     InvalidMbidError,

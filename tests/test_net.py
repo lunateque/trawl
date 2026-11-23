@@ -6,7 +6,7 @@ from time import time
 import httpx
 import pytest
 
-from trawl.config import ProxyConfig
+from trawl.config.models import ProxyConfig
 from trawl.net.client import HttpClient, HttpError
 from trawl.net.limiter import RateLimiter
 

@@ -5,8 +5,8 @@ import httpx
 import pytest
 from test_folder_sources import album, tone
 
+from trawl.core.fetch import FetchIssue, PartialFetchError
 from trawl.net.client import HttpClient
-from trawl.sources.base import FetchIssue, PartialFetchError
 from trawl.sources.soulseek import SoulseekSource
 
 

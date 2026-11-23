@@ -7,13 +7,14 @@ import httpx
 import pytest
 from conftest import mbid
 
+from trawl.core.audio import Probe
+from trawl.core.catalog import Credit, Medium, Release, ReleaseGroupRef, Track
+from trawl.core.fetch import Fetched
 from trawl.library.repack import repack
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import Credit, Medium, Release, ReleaseGroupRef, Track
 from trawl.net.client import HttpClient
 from trawl.runner.check import check_folder
-from trawl.runner.tools import AudioTools
-from trawl.sources.base import Fetched
+from trawl.runner.tools import default_audio_tools
 from trawl.sources.folder import (
     Folder,
     FolderFile,
@@ -25,7 +26,7 @@ from trawl.sources.folder import (
 )
 from trawl.sources.local import LocalSource
 from trawl.verify.fingerprint import AcoustId
-from trawl.verify.probe import AudioError, Probe, command, probe
+from trawl.verify.probe import AudioError, command, probe
 
 CREDIT = Credit("The Band", "artist", "")
 
@@ -233,10 +234,21 @@ async def test_fingerprints_override_folder_order_and_guard_duration(mode: str) 
         for track in disc.tracks
     }
     files = {key: Fetched(key, Path(key), "flac", None, True) for key in tracks}
-    tools = AudioTools(
-        probe=lambda _: Probe("flac", 44100, 2, 31_000, None),
-        decode_ok=lambda _: True,
-        fingerprint=lambda path: (31, path.name),
+
+    def probe_audio(_: Path) -> Probe:
+        return Probe("flac", 44100, 2, 31_000, None)
+
+    def decode(_: Path) -> bool:
+        return True
+
+    def fingerprint(path: Path) -> tuple[int, str]:
+        return 31, path.name
+
+    tools = replace(
+        default_audio_tools(),
+        probe=probe_audio,
+        decode_ok=decode,
+        fingerprint=fingerprint,
     )
 
     def request(req: httpx.Request) -> httpx.Response:

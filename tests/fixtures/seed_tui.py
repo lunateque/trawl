@@ -14,13 +14,14 @@ from textual.pilot import Pilot
 from typer.testing import CliRunner
 
 from trawl.cli import app
-from trawl.config import Config, load
+from trawl.config.load import load
+from trawl.config.models import Config
+from trawl.core.fetch import Candidate, CandidateItem, Fetched
 from trawl.db import queue, review
 from trawl.db.connect import open_db
 from trawl.db.states import TrackState
 from trawl.library.place import staging_dir
 from trawl.runner.lock import acquire
-from trawl.sources.base import Candidate, CandidateItem, Fetched
 
 
 def seed(root: Path) -> Config:

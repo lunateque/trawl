@@ -7,12 +7,13 @@ import httpx
 import pytest
 from mutagen import File  # pyright: ignore[reportMissingTypeStubs,reportUnknownVariableType]
 
-from trawl.config import GenreConfig
-from trawl.mb.models import Credit, Medium, Release, ReleaseGroupRef, Track, object_value
+from trawl.config.models import GenreConfig
+from trawl.core.catalog import Credit, Medium, Release, ReleaseGroupRef, Track, object_value
+from trawl.core.tags import TagFields
 from trawl.net.client import HttpClient, HttpError
 from trawl.tag.cover import fetch_cover
 from trawl.tag.lyrics import Lyrics
-from trawl.tag.mapping import TagFields, fields_for
+from trawl.tag.mapping import fields_for
 from trawl.tag.replaygain import supports_opus, track_gain
 from trawl.tag.writer import write
 from trawl.verify.fingerprint import AcoustId, AcoustResult

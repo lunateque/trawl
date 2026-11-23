@@ -6,9 +6,9 @@ from typing import Any
 
 import httpx
 
+from trawl.core.catalog import ArtistRef, RecordingRef, Release, ReleaseGroupRef, credit_string
 from trawl.db.connect import open_db
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import ArtistRef, RecordingRef, Release, ReleaseGroupRef, credit_string
 from trawl.net.client import HttpClient
 
 

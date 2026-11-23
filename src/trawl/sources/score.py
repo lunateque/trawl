@@ -1,27 +1,10 @@
 from collections.abc import Mapping, Sequence
 from statistics import mean
 
-from trawl.mb.models import Release, Track
-from trawl.normalize import norm_title
-from trawl.sources.base import Candidate, CandidateItem
-
-ALBUM_COVERAGE = 1.0
-TRACK_COVERAGE = 0.0
-
-
-def within_duration(expected: int | None, actual: int | None) -> bool:
-    return expected is None or (
-        actual is not None and abs(expected - actual) <= max(3000, expected * 0.02)
-    )
-
-
-def release_tracks(release: Release) -> list[Track]:
-    return [
-        track
-        for medium in release.media
-        for track in medium.tracks
-        if track.position > 0 and track.number != "0"
-    ]
+from trawl.core.audio import within_duration
+from trawl.core.catalog import Release, Track, release_tracks
+from trawl.core.fetch import Candidate, CandidateItem
+from trawl.core.normalize import norm_title
 
 
 def match_items(
@@ -31,6 +14,19 @@ def match_items(
     mapped: dict[str, CandidateItem] = {}
     used: set[int] = set()
 
+    _match_positions(tracks, items, release, wanted, mapped, used)
+    _match_titles(tracks, items, mapped, used)
+    return mapped
+
+
+def _match_positions(
+    tracks: Sequence[Track],
+    items: Sequence[CandidateItem],
+    release: Release | None,
+    wanted: dict[str, Track],
+    mapped: dict[str, CandidateItem],
+    used: set[int],
+) -> None:
     def positions(members: Sequence[Track], indices: Sequence[int], *, flattened: bool) -> None:
         if len(members) != len(indices):
             return
@@ -62,6 +58,13 @@ def match_items(
                 flattened=False,
             )
 
+
+def _match_titles(
+    tracks: Sequence[Track],
+    items: Sequence[CandidateItem],
+    mapped: dict[str, CandidateItem],
+    used: set[int],
+) -> None:
     titles = [{norm_title(title) for title in (item.title, *item.aliases)} for item in items]
     pairs: list[tuple[int | float, str, int]] = []
     for track in tracks:
@@ -84,7 +87,6 @@ def match_items(
         if mbid not in mapped and i not in used:
             mapped[mbid] = items[i]
             used.add(i)
-    return mapped
 
 
 def coverage(tracks: Sequence[Track], mapping: Mapping[str, CandidateItem]) -> float:

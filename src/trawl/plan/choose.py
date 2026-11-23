@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
 
-from trawl.config import PlanConfig
-from trawl.mb.models import Release, ReleaseGroupRef, ReleaseRef
+from trawl.config.models import PlanConfig
+from trawl.core.catalog import Release, ReleaseGroupRef, ReleaseRef, medium_rank
 
 
 def choose_release_group(
@@ -37,11 +37,6 @@ def choose_recording_group(releases: Sequence[ReleaseRef]) -> ReleaseGroupRef | 
     groups = {item.release_group.mbid: item.release_group for item in releases}
     official = {item.release_group.mbid for item in releases if item.status == "Official"}
     return choose_release_group(list(groups.values()), official.__contains__)
-
-
-def medium_rank(release: Release) -> int:
-    format_name = release.media[0].format if release.media else None
-    return 0 if format_name == "Digital Media" else 1 if format_name == "CD" else 2
 
 
 def choose_release(

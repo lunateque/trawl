@@ -2,10 +2,10 @@ import sqlite3
 from collections.abc import AsyncIterator, Mapping
 from urllib.parse import urlsplit
 
-from trawl.config import Config, ConfigError
+from trawl.config.models import Config, ConfigError
+from trawl.core.catalog import JsonObject, array_value, object_value
 from trawl.db.repo import Kind, Origin
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import JsonObject, array_value, object_value
 from trawl.net.client import HttpClient, HttpError
 from trawl.resolve.match import ExternalTrack
 from trawl.taste.store import Like, SyncReport, advance, cursor, ingest_collection, moment

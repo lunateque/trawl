@@ -1,15 +1,16 @@
 import asyncio
 from pathlib import Path
 
-from trawl.config import Config
-from trawl.library.place import write_atomic
+from trawl.config.models import Config
+from trawl.core.audio import AudioTools
+from trawl.core.catalog import Release, Track
+from trawl.core.paths import write_atomic
+from trawl.core.tags import TagFields
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import Release, Track
 from trawl.net.client import HttpClient
-from trawl.runner.tools import AudioTools
 from trawl.tag.cover import Cover, fetch_cover
 from trawl.tag.lyrics import fetch_lyrics
-from trawl.tag.mapping import TagFields, fields_for
+from trawl.tag.mapping import fields_for
 
 
 class AlbumTags:

@@ -11,15 +11,17 @@ import httpx
 import pytest
 from conftest import mbid
 
-from trawl.config import ConfigError, ProxyConfig, load_secrets
+from trawl.cli.doctor import _slskd  # pyright: ignore[reportPrivateUsage]
+from trawl.config.models import ConfigError, ProxyConfig
+from trawl.config.secrets import load_secrets
+from trawl.core.catalog import ArtistRef, MbDataError
+from trawl.core.fetch import Candidate, CandidateItem, FetchError, PartialFetchError
+from trawl.core.paths import unlink_regular, write_atomic
 from trawl.db.connect import open_db
-from trawl.doctor import _slskd  # pyright: ignore[reportPrivateUsage]
-from trawl.library.place import cleanup_staging, staging_dir, unlink_regular, write_atomic
+from trawl.library.place import cleanup_staging, staging_dir
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import ArtistRef, MbDataError
 from trawl.net.client import HttpClient, HttpError
 from trawl.runner.upgrade import _LibraryTrack, _replace_audio  # pyright: ignore[reportPrivateUsage]
-from trawl.sources.base import Candidate, CandidateItem, FetchError, PartialFetchError
 from trawl.sources.local import scan_folder
 from trawl.sources.soulseek import SoulseekSource
 from trawl.tag.cover import fetch_cover

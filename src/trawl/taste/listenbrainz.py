@@ -3,12 +3,12 @@ from collections import Counter
 from collections.abc import AsyncIterator
 from urllib.parse import quote
 
-from trawl.config import Config, ListenBrainzConfig, TasteTier
+from trawl.config.models import Config, ListenBrainzConfig, TasteTier
+from trawl.core.catalog import ArtistRef, JsonObject, array_value, object_value
+from trawl.core.normalize import norm_artist
 from trawl.db.repo import Kind, Origin, Scope, insert_want
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import ArtistRef, JsonObject, array_value, object_value
 from trawl.net.client import HttpClient, HttpError
-from trawl.normalize import norm_artist
 from trawl.plan.choose import choose_recording_group
 from trawl.resolve.match import ExternalTrack, resolve_artist
 from trawl.taste.releases import save_artist
@@ -70,12 +70,10 @@ def tier_for(plays: int, tiers: tuple[TasteTier, ...]) -> tuple[int, TasteTier] 
     )
 
 
-async def sync_listenbrainz(
-    conn: sqlite3.Connection, mb: MusicBrainzClient, cfg: Config, client: ListenBrainz
-) -> SyncReport:
-    artist_rows = [row async for row in client.stats("artists")]
-    recordings = [row async for row in client.stats("recordings")]
-    report = SyncReport(message="Stats not computed yet" if client.not_computed else "")
+type _Artists = dict[str, tuple[ArtistRef, int, TasteTier]]
+
+
+async def _artists(artist_rows: list[JsonObject], mb: MusicBrainzClient, cfg: Config) -> _Artists:
     artists: dict[str, tuple[ArtistRef, int, TasteTier]] = {}
     for row in artist_rows:
         name = text(row.get("artist_name"))
@@ -89,6 +87,32 @@ async def sync_listenbrainz(
             artist = await resolve_artist(mb, name)
         if artist is not None:
             artists[artist.mbid] = (artist, *ranked)
+    return artists
+
+
+async def _group(row: JsonObject, recording: str | None, mb: MusicBrainzClient) -> str | None:
+    group_mbid = text(row.get("release_group_mbid"))
+    if not group_mbid and (release := text(row.get("release_mbid"))):
+        try:
+            group_mbid = (await mb.release(release)).release_group.mbid
+        except HttpError as exc:
+            if exc.status != 404:
+                raise
+    if not group_mbid and recording:
+        group = choose_recording_group(await mb.recording_releases(recording))
+        group_mbid = group.mbid if group else None
+    return group_mbid
+
+
+async def _recordings(
+    conn: sqlite3.Connection,
+    mb: MusicBrainzClient,
+    cfg: Config,
+    recordings: list[JsonObject],
+    artists: _Artists,
+    min_track_plays: int,
+    report: SyncReport,
+) -> tuple[Counter[tuple[str, str]], set[str]]:
     by_name = {norm_artist(artist.name): artist.mbid for artist, _, _ in artists.values()}
     plays: Counter[tuple[str, str]] = Counter()
     seen: set[str] = set()
@@ -108,20 +132,11 @@ async def sync_listenbrainz(
         if not artist_ids and (artist_id := by_name.get(norm_artist(name))):
             artist_ids.add(artist_id)
         if artist_ids:
-            group_mbid = text(row.get("release_group_mbid"))
-            if not group_mbid and (release := text(row.get("release_mbid"))):
-                try:
-                    group_mbid = (await mb.release(release)).release_group.mbid
-                except HttpError as exc:
-                    if exc.status != 404:
-                        raise
-            if not group_mbid and recording:
-                group = choose_recording_group(await mb.recording_releases(recording))
-                group_mbid = group.mbid if group else None
+            group_mbid = await _group(row, recording, mb)
             if group_mbid:
                 for artist_id in artist_ids:
                     plays[artist_id, group_mbid] += count
-        if count >= client.cfg.min_track_plays and (recording or (name and title)):
+        if count >= min_track_plays and (recording or (name and title)):
             ref = f"recording:{recording}" if recording else f"track:{name}:{title}:{album or ''}"
             seen.add(ref)
             await ingest(
@@ -132,13 +147,20 @@ async def sync_listenbrainz(
                 report,
                 known_mbid=recording,
             )
-    if not client.not_computed:
-        for track in unresolved_tracks(conn, Origin.LISTENBRAINZ):
-            if track.origin_ref not in seen:
-                await ingest(conn, mb, cfg, track, report)
+    return plays, seen
+
+
+def _store_taste(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    artists: _Artists,
+    plays: Counter[tuple[str, str]],
+    not_computed: bool,
+    report: SyncReport,
+) -> None:
     with conn:
         conn.execute("BEGIN IMMEDIATE")
-        if not client.not_computed:
+        if not not_computed:
             conn.execute("DELETE FROM artist_release_plays")
             conn.executemany(
                 "INSERT INTO artist_release_plays VALUES (?,?,?)",
@@ -169,4 +191,21 @@ async def sync_listenbrainz(
                     WHERE id=? AND coalesce("limit",0) < ?""",
                     (tier.limit, tier.scope, row[0], tier.limit),
                 )
+
+
+async def sync_listenbrainz(
+    conn: sqlite3.Connection, mb: MusicBrainzClient, cfg: Config, client: ListenBrainz
+) -> SyncReport:
+    artist_rows = [row async for row in client.stats("artists")]
+    recordings = [row async for row in client.stats("recordings")]
+    report = SyncReport(message="Stats not computed yet" if client.not_computed else "")
+    artists = await _artists(artist_rows, mb, cfg)
+    plays, seen = await _recordings(
+        conn, mb, cfg, recordings, artists, client.cfg.min_track_plays, report
+    )
+    if not client.not_computed:
+        for track in unresolved_tracks(conn, Origin.LISTENBRAINZ):
+            if track.origin_ref not in seen:
+                await ingest(conn, mb, cfg, track, report)
+    _store_taste(conn, cfg, artists, plays, client.not_computed, report)
     return report

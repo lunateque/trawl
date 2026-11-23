@@ -1,27 +1,35 @@
 import asyncio
-import os
 import sqlite3
 from collections import deque
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, suppress
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import ClassVar, override
 
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Static, TabbedContent, TabPane
+from textual.widgets import Static, TabbedContent
 from textual.worker import Worker, WorkerCancelled, WorkerFailed, WorkerState
 
-from trawl.config import Config
+from trawl.config.models import Config
 from trawl.db import queue, repo, review
 from trawl.db.states import Actor, TrackState, transition
 from trawl.plan.wants import MbLink, parse_add_target
 from trawl.runner.lock import LockBusy, acquire
 from trawl.runner.progress import Progress
 from trawl.taste.store import bind
+from trawl.tui.dashboard import (
+    collect_events,
+    compose_dashboard,
+    event_rows,
+    queue_counts,
+    queue_rows,
+    source_lines,
+    status_line,
+    visible_events,
+)
 from trawl.tui.data import (
     Event,
     Snapshot,
@@ -73,25 +81,7 @@ class TrawlApp(App[None]):
         self._rows: dict[str, list[tuple[str, ...]]] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static(id="status", markup=False)
-        with Horizontal(id="overview"):
-            yield Static(id="counts", markup=False)
-            with Vertical(id="activity"):
-                yield Static(id="sources", markup=False)
-                yield Static("Events · newest first", classes="heading")
-                yield Grid("events")
-        yield Static("Needs you · 1 / 2 / 3 to switch · Tab to focus Events", id="needs")
-        with TabbedContent(initial="tab-missing"):
-            with TabPane("Missing", id="tab-missing"):
-                yield Grid("missing")
-            with TabPane("Rejected", id="tab-rejected"):
-                yield Grid("rejected")
-            with TabPane("Unresolved", id="tab-unresolved"):
-                yield Grid("unresolved")
-        yield Static(
-            "r retry · s skip · p pick · a accept · l link · e explain · w watch · q quit",
-            id="keys",
-        )
+        yield from compose_dashboard()
 
     def on_mount(self) -> None:
         self._main = self.screen
@@ -207,61 +197,10 @@ class TrawlApp(App[None]):
             selected = next((i for i, row in enumerate(rows) if row[0] == key), None)
             grid.move_cursor(row=min(cursor, len(rows) - 1) if selected is None else selected)
 
-    def _status_line(self) -> str:
-        if self._owner is not None:
-            return f"observer (pid {self._owner})"
-        if self._watch_running():
-            return "stopping" if self._stop.is_set() else f"running (pid {os.getpid()})"
-        return "stopped"
-
-    def _source_lines(self, view: Snapshot) -> str:
-        lines = ["Sources · last hour"]
-        for row in view.sources:
-            if row.pause:
-                delay = max(
-                    0,
-                    int(
-                        (
-                            datetime.fromisoformat(row.pause.until) - datetime.now(UTC)
-                        ).total_seconds()
-                    ),
-                )
-                activity = f"paused {delay // 60}m {delay % 60}s · {row.pause.reason}"
-            elif self._owner is not None:
-                activity = "observing"
-            elif active := self._progress.active[row.name]:
-                limit = {
-                    "ytmusic": self.cfg.sources.ytmusic_concurrency,
-                    "soulseek": self.cfg.sources.soulseek.concurrency,
-                }.get(row.name)
-                activity = f"{active}/{limit} downloading" if limit else f"{active} downloading"
-            else:
-                activity = "idle"
-            lines.append(f"{row.name:<9} ok {row.accepted:>3}  rej {row.rejected:>3}  {activity}")
-        return "\n".join(lines)
-
-    def _event_rows(self, view: Snapshot) -> list[tuple[str, ...]]:
-        while self._progress.events:
-            transfer = self._progress.events.popleft()
-            self._sequence += 1
-            self._live.append(
-                Event(
-                    f"live-{self._sequence}",
-                    transfer.at,
-                    "downloading" if transfer.started else "download ended",
-                    f"{transfer.source} · {transfer.title}",
-                    None,
-                )
-            )
-        self._visible_events = sorted(
-            (*view.events, *reversed(self._live)),
-            key=lambda event: event.at,
-            reverse=True,
-        )[:200]
-        return [
-            (event.id, event.at.astimezone().strftime("%H:%M"), event.label, event.detail)
-            for event in self._visible_events
-        ]
+    def _collect_events(self, view: Snapshot) -> list[tuple[str, ...]]:
+        self._sequence = collect_events(self._progress, self._live, self._sequence)
+        self._visible_events = visible_events(view, self._live)
+        return event_rows(self._visible_events)
 
     def refresh_dashboard(self) -> None:
         main = self._main
@@ -270,42 +209,16 @@ class TrawlApp(App[None]):
         with self.conn:
             self.conn.execute("BEGIN")
             view = self.snapshot = snapshot(self.conn, self.cfg)
+        status = status_line(self._owner, self._watch_running(), self._stop.is_set())
         main.query_one("#status", Static).update(
-            f" trawl ─ runner: {self._status_line()} │ library {self.cfg.library_root} "
+            f" trawl ─ runner: {status} │ library {self.cfg.library_root} "
             f"│ {datetime.now().strftime('%H:%M')}"
         )
-        labels = (*TrackState, "unresolved")
-        counts = [f"{name:<11} {view.counts.get(name, 0):>5}" for name in labels[:-1]]
-        counts.append(f"unresolved  {len(view.unresolved):>5}")
-        main.query_one("#counts", Static).update("Queue\n" + "\n".join(counts))
-        main.query_one("#sources", Static).update(self._source_lines(view))
-        missing = [
-            (str(track.id), track.title, track.release, track.attempts or "No attempts")
-            for track in view.tracks.values()
-            if track.state is TrackState.MISSING
-        ]
-        rejected = [
-            (
-                str(track.id),
-                track.title,
-                track.release,
-                rejection.reason if rejection else self._pin_label(track.pin),
-            )
-            for track_id, rejection in sorted(
-                view.rejected.items(), key=lambda item: (item[1] is None, item[0])
-            )
-            if (track := view.tracks.get(track_id))
-        ]
-        unresolved = [
-            (
-                str(row.id),
-                row.origin,
-                row.artist or "—",
-                row.title or row.album or row.ref,
-                row.reason,
-            )
-            for row in view.unresolved.values()
-        ]
+        main.query_one("#counts", Static).update(queue_counts(view))
+        main.query_one("#sources", Static).update(
+            source_lines(self.cfg, self._owner, self._progress, view)
+        )
+        missing, rejected, unresolved = queue_rows(view)
         tabs = main.query_one(TabbedContent)
         for label, rows in (
             ("Missing", missing),
@@ -316,14 +229,7 @@ class TrawlApp(App[None]):
             tabs.get_tab(f"tab-{name}").label = f"{label} {len(rows)}"
             self._replace(main.query_one(f"#{name}", Grid), rows)
         event_table = main.query_one("#events", Grid)
-        self._replace(event_table, self._event_rows(view))
-
-    @staticmethod
-    def _pin_label(raw: str | None) -> str:
-        if raw is None:
-            return "No staged file"
-        pin = queue.Pin.load(raw)
-        return f"Pinned · {pin.source}: {pin.item_ref or pin.ref}"
+        self._replace(event_table, self._collect_events(view))
 
     def _selection(self) -> tuple[str, int] | None:
         if self._main is None:

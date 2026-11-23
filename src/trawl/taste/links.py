@@ -5,9 +5,9 @@ from urllib.parse import parse_qs, urlsplit
 
 from ytmusicapi import YTMusic
 
-from trawl.config import ConfigError, Secrets
+from trawl.config.models import ConfigError, Secrets
+from trawl.core.catalog import array_value, object_value
 from trawl.db.repo import Kind, Origin
-from trawl.mb.models import array_value, object_value
 from trawl.net.client import HttpClient
 from trawl.plan.wants import ForeignLink
 from trawl.resolve.match import ExternalTrack

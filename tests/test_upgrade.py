@@ -6,13 +6,13 @@ import httpx
 import pytest
 from test_folder_sources import album, tone
 
-from trawl.config import Config, MbConfig, PlanConfig
+from trawl.config.models import Config, MbConfig, PlanConfig
+from trawl.core.catalog import Release
 from trawl.db import repo
 from trawl.db.connect import open_db
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import Release
 from trawl.net.client import HttpClient
-from trawl.runner.run import RunDeps
+from trawl.runner.context import RunDeps
 from trawl.runner.upgrade import upgrade_pass
 from trawl.sources.local import LocalSource
 from trawl.verify.fingerprint import AcoustId

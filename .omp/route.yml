@@ -1,1 +1,10 @@
-gate: ["uv run ruff check", "uv run ruff format --check", "uv run pyright", "uv run pytest -q"]
+gate:
+  - uv lock --check
+  - uv sync --frozen
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run lint-imports
+  - uv run python scripts/check_module_size.py
+  - uv run pyright
+  - uv run ty check
+  - uv run pytest -q -rs --cov --cov-report=term-missing

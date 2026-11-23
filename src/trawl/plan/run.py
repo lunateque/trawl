@@ -3,11 +3,11 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from trawl.config import PlanConfig
+from trawl.config.models import PlanConfig
+from trawl.core.catalog import MbDataError, Release, ReleaseGroupRef
 from trawl.db import repo
 from trawl.db.repo import Kind, Scope, Want, WantStatus
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import MbDataError, Release, ReleaseGroupRef
 from trawl.net.client import HttpError
 from trawl.plan.choose import choose_recording_group, choose_release
 from trawl.plan.wants import create_want

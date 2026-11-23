@@ -6,11 +6,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from io import BytesIO
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
-from trawl.config import ProxyConfig
+from trawl.config.models import ProxyConfig
 from trawl.net.limiter import RateLimiter
 
 _JSON_LIMIT = 10_000_000
@@ -56,14 +56,11 @@ def _retry_after(header: str) -> float | None:
     return min(300, max(0, remaining.total_seconds()))
 
 
-async def _read(response: httpx.Response, limit: int, service: str) -> bytes:
-    def error(detail: str, kind: str = "HttpError") -> HttpError:
-        return HttpError(response.url, response.status_code, detail, service=service, kind=kind)
+class _ReadError(Protocol):
+    def __call__(self, detail: str, kind: str = "HttpError") -> HttpError: ...
 
-    encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
-    if encoding not in {"gzip", "identity"}:
-        raise error("unsupported Content-Encoding")
-    length = response.headers.get("Content-Length") if encoding == "identity" else None
+
+def _expected_length(length: str | None, limit: int, error: _ReadError) -> int | None:
     expected = None
     if length is not None:
         if not length.isascii() or not length.isdecimal():
@@ -71,6 +68,44 @@ async def _read(response: httpx.Response, limit: int, service: str) -> bytes:
         digits = length.lstrip("0") or "0"
         if len(digits) > len(str(limit)) or (expected := int(digits)) > limit:
             raise error("response exceeds decoded size limit")
+    return expected
+
+
+async def _gzip_body(response: httpx.Response, limit: int, error: _ReadError) -> bytes:
+    size = 0
+    data = BytesIO()
+    # HTTPX's decoder expands an entire input chunk before yielding.
+    decoder = zlib.decompressobj(wbits=31)
+    try:
+        async for raw in response.aiter_raw():
+            while raw:
+                if decoder.eof:
+                    decoder = zlib.decompressobj(wbits=31)
+                chunk = decoder.decompress(raw, limit - size + 1)
+                size += len(chunk)
+                if size > limit:
+                    raise error("response exceeds decoded size limit")
+                data.write(chunk)
+                raw = decoder.unused_data
+    except zlib.error as exc:
+        raise error("invalid gzip response", type(exc).__name__) from None
+    if not decoder.eof:
+        raise error("incomplete gzip response")
+    return data.getvalue()
+
+
+async def _read(response: httpx.Response, limit: int, service: str) -> bytes:
+    def error(detail: str, kind: str = "HttpError") -> HttpError:
+        return HttpError(response.url, response.status_code, detail, service=service, kind=kind)
+
+    encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
+    if encoding not in {"gzip", "identity"}:
+        raise error("unsupported Content-Encoding")
+    expected = (
+        _expected_length(response.headers.get("Content-Length"), limit, error)
+        if encoding == "identity"
+        else None
+    )
     size = 0
     data = BytesIO()
     if response.is_stream_consumed:
@@ -85,24 +120,8 @@ async def _read(response: httpx.Response, limit: int, service: str) -> bytes:
             data.write(chunk)
         content = data.getvalue()
     else:
-        # HTTPX's decoder expands an entire input chunk before yielding.
-        decoder = zlib.decompressobj(wbits=31)
-        try:
-            async for raw in response.aiter_raw():
-                while raw:
-                    if decoder.eof:
-                        decoder = zlib.decompressobj(wbits=31)
-                    chunk = decoder.decompress(raw, limit - size + 1)
-                    size += len(chunk)
-                    if size > limit:
-                        raise error("response exceeds decoded size limit")
-                    data.write(chunk)
-                    raw = decoder.unused_data
-        except zlib.error as exc:
-            raise error("invalid gzip response", type(exc).__name__) from None
-        if not decoder.eof:
-            raise error("incomplete gzip response")
-        content = data.getvalue()
+        content = await _gzip_body(response, limit, error)
+        size = len(content)
     if size > limit:
         raise error("response exceeds decoded size limit")
     if expected is not None and expected != size:

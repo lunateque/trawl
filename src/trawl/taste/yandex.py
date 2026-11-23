@@ -6,7 +6,7 @@ from dataclasses import replace
 from yandex_music import Client, Playlist, Track  # pyright: ignore[reportMissingTypeStubs]
 from yandex_music.exceptions import YandexMusicError  # pyright: ignore[reportMissingTypeStubs]
 
-from trawl.config import Config, ConfigError
+from trawl.config.models import Config, ConfigError
 from trawl.db.repo import Kind, Origin
 from trawl.mb.client import MusicBrainzClient
 from trawl.resolve.match import ExternalTrack

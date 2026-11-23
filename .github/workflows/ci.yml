@@ -1,34 +1,52 @@
-name: CI
+name: ci
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  gate:
+  check:
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    env:
+      UV_PYTHON: "3.12"
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v7
+      - name: actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: astral-sh/setup-uv v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.13.3"
       - name: Install Linux audio tools
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libchromaprint-tools rsgain
+          sudo apt-get install -y 'ffmpeg=7:6.1.1-*' 'libchromaprint-tools=1.5.1-*' 'rsgain=3.4-1'
       - name: Install Windows audio tools
         if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          choco install ffmpeg -y
+          choco install ffmpeg --version=8.0.1 -y
           if ($LASTEXITCODE -ne 0) { throw "ffmpeg installation failed" }
           $tools = Join-Path $env:RUNNER_TEMP 'audio-tools'
           New-Item -ItemType Directory $tools | Out-Null
-          gh release download --repo acoustid/chromaprint --pattern '*windows*x86_64*.zip' --dir $tools
+          gh release download v1.6.2 --repo acoustid/chromaprint --pattern '*windows*x86_64*.zip' --dir $tools
           if ($LASTEXITCODE -ne 0) { throw "fpcalc download failed" }
-          gh release download --repo complexlogic/rsgain --pattern '*win*64*.zip' --dir $tools
+          gh release download v3.8 --repo complexlogic/rsgain --pattern '*win*64*.zip' --dir $tools
           if ($LASTEXITCODE -ne 0) { throw "rsgain download failed" }
           Get-ChildItem $tools -Filter '*.zip' | ForEach-Object {
             Expand-Archive $_.FullName (Join-Path $tools $_.BaseName)
@@ -39,8 +57,25 @@ jobs:
             $binary.DirectoryName >> $env:GITHUB_PATH
           }
       - run: uv python install 3.12
-      - run: uv sync --locked --python 3.12
-      - run: uv run ruff check
-      - run: uv run ruff format --check
+      - run: uv lock --check
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run lint-imports
+      - run: uv run python scripts/check_module_size.py
       - run: uv run pyright
-      - run: uv run pytest -q
+      - run: uv run ty check
+      - run: uv run pytest -q -rs --cov --cov-report=term-missing
+
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks v8.30.1
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          detect --source /repo --redact --exit-code 1

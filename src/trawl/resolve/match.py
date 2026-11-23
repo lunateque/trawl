@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 
+from trawl.core.audio import within_duration
+from trawl.core.catalog import ArtistRef
+from trawl.core.normalize import norm_artist, norm_title
 from trawl.db.repo import Kind, Origin
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import ArtistRef
-from trawl.normalize import norm_artist, norm_title
-from trawl.sources.score import within_duration
 
 
 @dataclass(frozen=True)

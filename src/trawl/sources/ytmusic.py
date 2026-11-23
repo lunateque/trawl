@@ -3,7 +3,6 @@ import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol, cast
-from urllib.parse import parse_qs, urlsplit
 
 from yt_dlp import YoutubeDL  # pyright: ignore[reportMissingTypeStubs]
 from yt_dlp.postprocessor.ffmpeg import (  # pyright: ignore[reportMissingTypeStubs]
@@ -17,9 +16,17 @@ from yt_dlp.utils import (  # pyright: ignore[reportMissingTypeStubs]
 from ytmusicapi import YTMusic  # pyright: ignore[reportMissingTypeStubs]
 from ytmusicapi.exceptions import YTMusicError  # pyright: ignore[reportMissingTypeStubs]
 
-from trawl.mb.models import JsonObject, Release, Track, array_value, credit_string, object_value
-from trawl.normalize import norm_artist, norm_title
-from trawl.sources.base import (
+from trawl.core.audio import LOSSLESS, within_duration
+from trawl.core.catalog import (
+    JsonObject,
+    Release,
+    Track,
+    array_value,
+    credit_string,
+    object_value,
+    release_tracks,
+)
+from trawl.core.fetch import (
     Candidate,
     CandidateItem,
     Fetched,
@@ -28,15 +35,15 @@ from trawl.sources.base import (
     PartialFetchError,
     SourceWall,
 )
-from trawl.sources.score import match_items, release_tracks, within_duration
-from trawl.verify.probe import LOSSLESS, AudioError, command, probe
+from trawl.core.normalize import norm_artist, norm_title
+from trawl.sources.score import match_items
+from trawl.verify.probe import AudioError, command, probe
 
 _WALL = re.compile(
     r"\bHTTP(?: Error| status(?: code)?)?[: ]+(?:403|429)\b"
     r"|\b(?:403|429) Client Error\b|sign in to confirm|not a bot",
     re.I,
 )
-_VIDEO = re.compile(r"[A-Za-z0-9_-]{11}")
 _STATUS = re.compile(r"\b(?:HTTP(?: Error| status(?: code)?)?[: ]+(\d{3})|(\d{3}) Client Error)\b")
 _SEARCH_URL = "https://music.youtube.com/youtubei/v1/search"
 _VIDEO_URL = "https://www.youtube.com/watch"
@@ -64,23 +71,6 @@ def _diagnostic(exc: Exception, url: str) -> str:
     status = f" HTTP {match[1] or match[2]}" if match else ""
     reason = " (sign-in or rate limit required)" if is_wall(exc) else ""
     return f"YouTube Music{status} {type(exc).__name__} at {url}{reason}"
-
-
-def video_id(url: str) -> str:
-    parsed = urlsplit(url)
-    host = parsed.hostname
-    value = ""
-    if parsed.scheme in {"https", "http"}:
-        if host == "youtu.be":
-            value = parsed.path.removeprefix("/")
-        elif host in {"youtube.com", "www.youtube.com", "music.youtube.com", "m.youtube.com"}:
-            if parsed.path == "/watch":
-                value = parse_qs(parsed.query).get("v", [""])[0]
-            elif parsed.path.startswith("/shorts/"):
-                value = parsed.path.removeprefix("/shorts/")
-    if not _VIDEO.fullmatch(value):
-        raise ValueError("expected a YouTube or YouTube Music video URL")
-    return value
 
 
 class Downloader(Protocol):

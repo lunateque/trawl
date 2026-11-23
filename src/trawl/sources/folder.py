@@ -4,16 +4,12 @@ from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 from statistics import median
 
-from trawl.mb.models import Release, Track
-from trawl.normalize import norm_artist, norm_title
-from trawl.plan.choose import medium_rank
-from trawl.sources.base import Candidate, CandidateItem
-from trawl.sources.score import coverage, match_items, release_tracks, score, within_duration
+from trawl.core.audio import AUDIO_EXTS, LOSSLESS_EXTS, within_duration
+from trawl.core.catalog import Release, Track, medium_rank, release_tracks
+from trawl.core.fetch import Candidate, CandidateItem
+from trawl.core.normalize import norm_artist, norm_title
+from trawl.sources.score import coverage, match_items, score
 
-TAGGABLE = frozenset({".flac", ".opus", ".ogg", ".m4a", ".mp3"})
-REPACK_EXTS = frozenset({".wav", ".aiff", ".aif", ".ape", ".wv"})
-AUDIO_EXTS = TAGGABLE | REPACK_EXTS
-LOSSLESS_EXTS = REPACK_EXTS | {".flac"}
 _DISC = re.compile(r"(?:cd|disc|disk|d)\s*([1-9][0-9]*)", re.I)
 _NUMBER = re.compile(r"^(?:(\d{1,2})-(?=\d{2}\D))?(\d{1,3})[ ._)-]+(.+)$")
 
@@ -135,6 +131,74 @@ def _has_matching_discs(release: Release, mapping: dict[str, CandidateItem]) -> 
     )
 
 
+def _single_soulseek_match(
+    release: Release, tracks: Sequence[Track], file: FolderFile
+) -> dict[str, FolderFile]:
+    if file.length_ms is None:
+        return {}
+    name = norm_title(file.rel_path.stem.replace("_", " ").replace("-", " "))
+    for track in tracks:
+        if (
+            any(
+                artist and artist in name
+                for credit in track.credits or release.credits
+                if (artist := norm_artist(credit.name))
+            )
+            and norm_title(track.title) in name
+            and within_duration(track.length_ms, file.length_ms)
+        ):
+            return {track.mbid: file}
+    return {}
+
+
+def _rank_folder_edition(
+    source: str,
+    folder: Folder,
+    files: list[FolderFile],
+    release: Release,
+    tracks: list[Track],
+    album: bool,
+    threshold: float,
+) -> FolderMatch | None:
+    single = len(files) == 1 and not album
+    if single and source == "soulseek":
+        matched = _single_soulseek_match(release, tracks, files[0])
+    else:
+        matched = match_folder(release, tracks, files)
+    mapping = {key: file.item() for key, file in matched.items()}
+    if source == "soulseek":
+        mapping = {
+            track.mbid: replace(item, expected_length_ms=track.length_ms)
+            for track in tracks
+            if (item := mapping.get(track.mbid)) is not None
+        }
+    if not mapping or coverage(tracks, mapping) < threshold:
+        return None
+    chosen = list(matched.values())
+    rates = [file.bitrate for file in chosen if file.bitrate is not None]
+    candidate = Candidate(
+        source,
+        folder.ref,
+        "track" if single else "album",
+        folder.title,
+        chosen[0].ext.removeprefix(".") if len({file.ext for file in chosen}) == 1 else None,
+        round(median(rates)) if rates else None,
+        all(file.is_lossless for file in chosen),
+        False,
+        tuple(mapping.values()),
+        free_slot=folder.free_slot,
+        upload_speed=folder.upload_speed,
+    )
+    full = release_tracks(release)
+    complete = not single and len(match_folder(release, full, files)) == len(full)
+    return FolderMatch(
+        release,
+        replace(candidate, score=score(candidate, tracks, mapping)),
+        mapping,
+        complete,
+    )
+
+
 def rank_folders(
     source: str,
     folders: Sequence[Folder],
@@ -172,66 +236,13 @@ def rank_folders(
             # Flattened numbering can match a split edition without matching its disc layout.
             if flat and len(release.media) > 1 and tracklist in flat_preferred:
                 continue
-            matched = match_folder(release, tracks, files)
-            single = len(files) == 1 and not album
-            if single and source == "soulseek":
-                file = files[0]
-                matched = {}
-                if file.length_ms is None:
-                    continue
-                name = norm_title(file.rel_path.stem.replace("_", " ").replace("-", " "))
-                for track in tracks:
-                    if (
-                        any(
-                            artist and artist in name
-                            for credit in track.credits or release.credits
-                            if (artist := norm_artist(credit.name))
-                        )
-                        and norm_title(track.title) in name
-                        and within_duration(track.length_ms, file.length_ms)
-                    ):
-                        matched = {track.mbid: file}
-                        break
-                else:
-                    matched = {}
-            mapping = {key: file.item() for key, file in matched.items()}
-            if source == "soulseek":
-                mapping = {
-                    track.mbid: replace(item, expected_length_ms=track.length_ms)
-                    for track in tracks
-                    if (item := mapping.get(track.mbid)) is not None
-                }
-            if not mapping or coverage(tracks, mapping) < threshold:
+            match = _rank_folder_edition(source, folder, files, release, tracks, album, threshold)
+            if match is None:
                 continue
-            chosen = list(matched.values())
-            rates = [file.bitrate for file in chosen if file.bitrate is not None]
-            candidate = Candidate(
-                source,
-                folder.ref,
-                "track" if single else "album",
-                folder.title,
-                chosen[0].ext.removeprefix(".")
-                if len({file.ext for file in chosen}) == 1
-                else None,
-                round(median(rates)) if rates else None,
-                all(file.is_lossless for file in chosen),
-                False,
-                tuple(mapping.values()),
-                free_slot=folder.free_slot,
-                upload_speed=folder.upload_speed,
-            )
-            full = release_tracks(release)
-            complete = not single and len(match_folder(release, full, files)) == len(full)
-            match = FolderMatch(
-                release,
-                replace(candidate, score=score(candidate, tracks, mapping)),
-                mapping,
-                complete,
-            )
             if tracklist is None:
                 matches.append(match)
                 continue
-            rank = (not _has_matching_discs(release, mapping), medium_rank(release))
+            rank = (not _has_matching_discs(release, match.mapping), medium_rank(release))
             previous = by_tracklist.get(tracklist)
             if previous is None or rank < previous[0]:
                 by_tracklist[tracklist] = (rank, [match])

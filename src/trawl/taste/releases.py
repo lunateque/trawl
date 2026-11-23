@@ -2,9 +2,9 @@ import logging
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
+from trawl.core.catalog import ArtistRef, MbDataError
 from trawl.db.repo import Kind, Origin, Scope, insert_want
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import ArtistRef, MbDataError
 from trawl.net.client import HttpError
 from trawl.taste.store import SyncReport, moment
 

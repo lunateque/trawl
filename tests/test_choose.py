@@ -2,8 +2,8 @@ from dataclasses import replace
 
 import pytest
 
-from trawl.config import PlanConfig
-from trawl.mb.models import Medium, Release, ReleaseGroupRef, Track
+from trawl.config.models import PlanConfig
+from trawl.core.catalog import Medium, Release, ReleaseGroupRef, Track
 from trawl.plan.choose import choose_release, choose_release_group
 
 GROUP = ReleaseGroupRef("a", "title", "Album", (), "2000")

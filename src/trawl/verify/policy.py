@@ -2,10 +2,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from trawl.mb.models import Track
-from trawl.sources.score import within_duration
+from trawl.core.audio import Probe, within_duration
+from trawl.core.catalog import Track
 from trawl.verify.fingerprint import AcoustResult
-from trawl.verify.probe import Probe
 
 
 @dataclass(frozen=True)

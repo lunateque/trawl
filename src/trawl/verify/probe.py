@@ -1,14 +1,13 @@
 import json
 import shutil
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from threading import Thread
 from typing import BinaryIO
 
-from trawl.mb.models import array_value, object_value
+from trawl.core.audio import Probe
+from trawl.core.catalog import array_value, object_value
 
-LOSSLESS = frozenset({"flac", "alac", "ape", "wavpack"})
 _OUTPUT_LIMIT = 1024 * 1024
 
 
@@ -59,17 +58,6 @@ def command(
         return subprocess.CompletedProcess(
             child.args, status, output.decode("utf-8", "replace"), errors.decode("utf-8", "replace")
         )
-
-
-@dataclass(frozen=True)
-class Probe:
-    codec: str
-    sample_rate: int
-    channels: int
-    duration_ms: int
-    bitrate: int | None
-    bits: int | None = None
-    sample_fmt: str | None = None
 
 
 def probe(path: Path) -> Probe:

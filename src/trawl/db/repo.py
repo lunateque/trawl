@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from trawl.mb.models import Medium, Release, Track, credit_string
+from trawl.core.catalog import Medium, Release, Track, credit_string
 
 
 class Kind(StrEnum):

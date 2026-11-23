@@ -1,8 +1,8 @@
 import re
 from pathlib import Path
 
-from trawl.sources.folder import REPACK_EXTS
-from trawl.verify.probe import AudioError, Probe, command, probe
+from trawl.core.audio import REPACK_EXTS, Probe
+from trawl.verify.probe import AudioError, command, probe
 
 _INTEGER_PCM = re.compile(r"pcm_[su](?:8|16|24|32)(?:le|be)?")
 

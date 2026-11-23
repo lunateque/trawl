@@ -5,19 +5,16 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, replace
 from functools import partial
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
-from typing import cast
 from urllib.parse import quote
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from trawl.config import slskd_insecure
-from trawl.library.place import linked_ancestor, unlink_regular
-from trawl.mb.models import Release, Track, array_value, credit_string, object_value
-from trawl.net.client import HttpClient, HttpError
-from trawl.sources.base import (
+from trawl.config.secrets import slskd_insecure
+from trawl.core.catalog import Release, Track, credit_string, object_value
+from trawl.core.fetch import (
     Candidate,
     Fetched,
     FetchError,
@@ -25,15 +22,17 @@ from trawl.sources.base import (
     PartialFetchError,
     SourceWall,
 )
-from trawl.sources.folder import (
-    AUDIO_EXTS,
-    Folder,
-    FolderFile,
-    FolderMatch,
-    disc_number,
-    rank_folders,
-)
+from trawl.core.paths import linked_ancestor, unlink_regular
+from trawl.net.client import HttpClient, HttpError
+from trawl.sources.folder import Folder, FolderMatch, rank_folders
 from trawl.sources.local import stage_file
+from trawl.sources.slskd import (
+    Transfer,
+    is_path_component,
+    parse_folders,
+    parse_transfers,
+    remote_path,
+)
 from trawl.verify.probe import AudioError
 
 _LOG = logging.getLogger(__name__)
@@ -47,103 +46,6 @@ _MIN_FILE_LIMIT = 200_000_000
 _PCM_BYTES_PER_MS = 96_000 * 2 * 3 // 1000
 
 
-def _number(raw: object) -> int | None:
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
-
-
-def _remote(raw: str) -> PurePosixPath | None:
-    path = PurePosixPath(raw.replace("\\", "/"))
-    if not path.name or ".." in path.parts or len(path.parts) < 2:
-        return None
-    return path
-
-
-def _folders(response: object) -> list[Folder]:
-    groups: dict[tuple[str, PurePosixPath], list[FolderFile]] = {}
-    stats: dict[str, tuple[bool, int]] = {}
-    for raw in array_value(response):
-        peer = object_value(raw)
-        user = peer.get("username")
-        if not isinstance(user, str) or not user:
-            continue
-        stats[user] = (peer.get("hasFreeUploadSlot") is True, _number(peer.get("uploadSpeed")) or 0)
-        locked = {
-            object_value(item).get("filename")
-            for item in array_value(peer.get("lockedFiles"))
-            if isinstance(object_value(item).get("filename"), str)
-        }
-        for value in array_value(peer.get("files")):
-            file = object_value(value)
-            name = file.get("filename")
-            size = _number(file.get("size"))
-            if (
-                not isinstance(name, str)
-                or name in locked
-                or (path := _remote(name)) is None
-                or size is None
-            ):
-                continue
-            ext = path.suffix.casefold()
-            if ext not in AUDIO_EXTS | {".cue"}:
-                continue
-            root = path.parent.parent if disc_number(path.parent.name) else path.parent
-            seconds = _number(file.get("length"))
-            groups.setdefault((user, root), []).append(
-                FolderFile(
-                    path.relative_to(root),
-                    size,
-                    seconds * 1000 if seconds is not None else None,
-                    _number(file.get("bitRate")),
-                    ext,
-                    name,
-                )
-            )
-    return [
-        Folder(user, str(root), tuple(dict.fromkeys(files)), *stats[user])
-        for (user, root), files in groups.items()
-    ]
-
-
-@dataclass(frozen=True)
-class _Transfer:
-    id: str
-    bytes: int
-    state: frozenset[str]
-
-
-def _transfers(raw: object) -> dict[str, _Transfer]:
-    transfers: dict[str, _Transfer] = {}
-    stack = [raw]
-    while stack:
-        value = stack.pop()
-        if isinstance(value, list):
-            stack.extend(reversed(cast("list[object]", value)))
-            continue
-        if not isinstance(value, dict):
-            continue
-        info = cast("dict[str, object]", value)
-        if "filename" not in info:
-            stack.extend(info.get(key) for key in ("files", "directories", "downloads"))
-            continue
-        name, key, state = info.get("filename"), info.get("id"), info.get("state")
-        if isinstance(name, str) and isinstance(key, str) and isinstance(state, str):
-            transfers[name.replace("\\", "/")] = _Transfer(
-                key,
-                _number(info.get("bytesTransferred")) or 0,
-                frozenset(word.strip().casefold() for word in state.split(",")),
-            )
-    return transfers
-
-
-def _component(value: str) -> bool:
-    return bool(
-        value
-        and not value.endswith((" ", "."))
-        and not re.search(r'[<>:"/\\|?*\x00-\x1f]', value)
-        and not PureWindowsPath(value).is_reserved()
-    )
-
-
 def _abandon_stage(workspace: TemporaryDirectory[str], task: asyncio.Task[Fetched]) -> None:
     try:
         if not task.cancelled():
@@ -151,6 +53,28 @@ def _abandon_stage(workspace: TemporaryDirectory[str], task: asyncio.Task[Fetche
         workspace.cleanup()
     except OSError as exc:
         _LOG.warning("Cannot clean up cancelled slskd staging files: %s", exc)
+
+
+def _index_items(candidate: Candidate) -> tuple[dict[str, tuple[int, int]], dict[str, FetchIssue]]:
+    indexed: dict[str, tuple[int, int]] = {}
+    issues: dict[str, FetchIssue] = {}
+    for n, item in enumerate(candidate.items):
+        cap = max(_MIN_FILE_LIMIT, 3 * _PCM_BYTES_PER_MS * (item.expected_length_ms or 0))
+        if item.size is None or item.size <= 0:
+            issues[item.ref] = FetchIssue("slskd file has no valid size")
+        elif item.size > cap:
+            issues[item.ref] = FetchIssue(f"slskd file exceeds size limit ({cap} bytes)")
+        else:
+            indexed[item.ref] = (n, item.size)
+    return indexed, issues
+
+
+@dataclass
+class _Waits:
+    pending: set[str]
+    ready: list[str]
+    progress: dict[str, int]
+    moves: dict[str, float]
 
 
 class SoulseekSource:
@@ -229,7 +153,7 @@ class SoulseekSource:
                 if status.get("isComplete") is True or left <= 0:
                     break
                 await self._sleep(min(1, left))
-            return _folders(await self._api("GET", f"{endpoint}/responses"))
+            return parse_folders(await self._api("GET", f"{endpoint}/responses"))
         finally:
             await self._delete(endpoint)
 
@@ -271,8 +195,10 @@ class SoulseekSource:
         return []
 
     def _destination(self, remote: str) -> Path:
-        path = _remote(remote)
-        if path is None or any(not _component(part) for part in (path.parent.name, path.name)):
+        path = remote_path(remote)
+        if path is None or any(
+            not is_path_component(part) for part in (path.parent.name, path.name)
+        ):
             raise FetchError("unsafe slskd download path")
         return self._download / path.parent.name / path.name
 
@@ -353,69 +279,14 @@ class SoulseekSource:
         endpoint: str,
         transfer_ids: dict[str, str],
     ) -> list[Fetched]:
-        indexed: dict[str, tuple[int, int]] = {}
-        issues: dict[str, FetchIssue] = {}
-        for n, item in enumerate(candidate.items):
-            cap = max(_MIN_FILE_LIMIT, 3 * _PCM_BYTES_PER_MS * (item.expected_length_ms or 0))
-            if item.size is None or item.size <= 0:
-                issues[item.ref] = FetchIssue("slskd file has no valid size")
-            elif item.size > cap:
-                issues[item.ref] = FetchIssue(f"slskd file exceeds size limit ({cap} bytes)")
-            else:
-                indexed[item.ref] = (n, item.size)
+        indexed, issues = _index_items(candidate)
         if indexed:
             await self._api(
                 "POST",
                 endpoint,
                 body=[{"filename": name, "size": size} for name, (_, size) in indexed.items()],
             )
-        pending = set(indexed)
-        ready: list[str] = []
-        progress: dict[str, int] = {}
-        moves: dict[str, float] = dict.fromkeys(indexed, self._clock())
-        wall: SourceWall | None = None
-        while pending:
-            try:
-                active = _transfers(await self._api("GET", endpoint))
-            except (FetchError, SourceWall) as exc:
-                if isinstance(exc, SourceWall):
-                    wall = exc
-                for name in pending:
-                    issues[name] = FetchIssue(str(exc))
-                break
-            now = self._clock()
-            stalled = False
-            for name in sorted(pending):
-                transfer = active.get(name.replace("\\", "/"))
-                if transfer:
-                    transfer_ids[name] = transfer.id
-                    if transfer.bytes > indexed[name][1]:
-                        pending.remove(name)
-                        issues[name] = FetchIssue("slskd transfer exceeded advertised size")
-                        await self._delete(f"{endpoint}/{quote(transfer.id, safe='')}", remove=True)
-                        del transfer_ids[name]
-                        continue
-                if transfer and "completed" in transfer.state:
-                    pending.remove(name)
-                    if "succeeded" in transfer.state:
-                        ready.append(name)
-                    else:
-                        failure = ", ".join(sorted(transfer.state & _FAILED))
-                        issues[name] = FetchIssue(
-                            f"slskd transfer failed: {failure or 'not succeeded'}"
-                        )
-                else:
-                    if transfer and transfer.bytes > progress.get(name, 0):
-                        progress[name] = transfer.bytes
-                        moves[name] = now
-                    stalled |= now - moves[name] >= self._stall_timeout
-            if stalled:
-                for transfer_id in transfer_ids.values():
-                    await self._delete(f"{endpoint}/{quote(transfer_id, safe='')}", remove=True)
-                issues.update(dict.fromkeys(indexed, FetchIssue("stalled")))
-                raise PartialFetchError([], issues, None)
-            if pending:
-                await self._sleep(1)
+        ready, wall = await self._poll(endpoint, indexed, transfer_ids, issues)
         files: list[Fetched] = []
         for name in ready:
             try:
@@ -426,3 +297,78 @@ class SoulseekSource:
         if issues:
             raise PartialFetchError(files, issues, wall)
         return files
+
+    async def _poll(
+        self,
+        endpoint: str,
+        indexed: dict[str, tuple[int, int]],
+        transfer_ids: dict[str, str],
+        issues: dict[str, FetchIssue],
+    ) -> tuple[list[str], SourceWall | None]:
+        pending = set(indexed)
+        waits = _Waits(pending, [], {}, dict.fromkeys(indexed, self._clock()))
+        wall: SourceWall | None = None
+        while pending:
+            try:
+                active = parse_transfers(await self._api("GET", endpoint))
+            except (FetchError, SourceWall) as exc:
+                if isinstance(exc, SourceWall):
+                    wall = exc
+                for name in pending:
+                    issues[name] = FetchIssue(str(exc))
+                break
+            now = self._clock()
+            stalled = False
+            for name in sorted(pending):
+                name_key = name.replace("\\", "/")
+                stalled |= await self._poll_file(
+                    endpoint,
+                    name,
+                    indexed[name][1],
+                    active.get(name_key),
+                    waits,
+                    transfer_ids,
+                    issues,
+                    now,
+                )
+            if stalled:
+                for transfer_id in transfer_ids.values():
+                    await self._delete(f"{endpoint}/{quote(transfer_id, safe='')}", remove=True)
+                issues.update(dict.fromkeys(indexed, FetchIssue("stalled")))
+                raise PartialFetchError([], issues, None)
+            if pending:
+                await self._sleep(1)
+        return waits.ready, wall
+
+    async def _poll_file(
+        self,
+        endpoint: str,
+        name: str,
+        limit: int,
+        transfer: Transfer | None,
+        waits: _Waits,
+        transfer_ids: dict[str, str],
+        issues: dict[str, FetchIssue],
+        now: float,
+    ) -> bool:
+        if transfer:
+            transfer_ids[name] = transfer.id
+            if transfer.bytes > limit:
+                waits.pending.remove(name)
+                issues[name] = FetchIssue("slskd transfer exceeded advertised size")
+                await self._delete(f"{endpoint}/{quote(transfer.id, safe='')}", remove=True)
+                del transfer_ids[name]
+                return False
+        if transfer and "completed" in transfer.state:
+            waits.pending.remove(name)
+            if "succeeded" in transfer.state:
+                waits.ready.append(name)
+            else:
+                failure = ", ".join(sorted(transfer.state & _FAILED))
+                issues[name] = FetchIssue(f"slskd transfer failed: {failure or 'not succeeded'}")
+        else:
+            if transfer and transfer.bytes > waits.progress.get(name, 0):
+                waits.progress[name] = transfer.bytes
+                waits.moves[name] = now
+            return now - waits.moves[name] >= self._stall_timeout
+        return False

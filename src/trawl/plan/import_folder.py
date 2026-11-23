@@ -4,16 +4,16 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from trawl.config import Config
+from trawl.config.models import Config
+from trawl.core.catalog import Release, object_value, release_tracks
+from trawl.core.fetch import Candidate, CandidateItem
 from trawl.db import repo
 from trawl.db.repo import Kind, Origin, Scope, Want, WantStatus
 from trawl.db.states import Actor, TrackState, transition
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import Release, object_value
 from trawl.net.client import HttpError
 from trawl.plan.choose import choose_release
 from trawl.plan.run import store_tracks
-from trawl.sources.base import Candidate, CandidateItem
 from trawl.sources.folder import (
     FolderFile,
     FolderMatch,
@@ -23,7 +23,6 @@ from trawl.sources.folder import (
     reject_cue_image,
 )
 from trawl.sources.local import scan_folder
-from trawl.sources.score import release_tracks
 from trawl.verify.fingerprint import AcoustId, fingerprint
 from trawl.verify.policy import recording_ids
 from trawl.verify.probe import AudioError
@@ -58,9 +57,7 @@ def _match_recordings(
     return matched
 
 
-async def plan_import(
-    conn: sqlite3.Connection, cfg: Config, mb: MusicBrainzClient, acoustid: AcoustId, root: Path
-) -> Release:
+async def _scan_import(root: Path) -> tuple[Path, list[FolderFile]]:
     root = await asyncio.to_thread(root.resolve, strict=True)
     files = [file for file, _ in await asyncio.to_thread(scan_folder, root)]
     if reject_cue_image(files):
@@ -68,6 +65,12 @@ async def plan_import(
     files = pick_format_set(group_disc_subfolders(files))
     if not files:
         raise ValueError("No audio files in the import folder")
+    return root, files
+
+
+async def _identify_files(
+    root: Path, files: list[FolderFile], mb: MusicBrainzClient, acoustid: AcoustId, min_score: float
+) -> dict[FolderFile, tuple[str, ...]]:
     identities: dict[FolderFile, tuple[str, ...]] = {}
     canonical: dict[str, str | None] = {}
     for file in files:
@@ -76,7 +79,7 @@ async def plan_import(
         except AudioError:
             continue
         matches: list[str] = []
-        for mbid in recording_ids(await acoustid.lookup(duration, fp), cfg.acoustid_min_score):
+        for mbid in recording_ids(await acoustid.lookup(duration, fp), min_score):
             if mbid not in canonical:
                 try:
                     canonical[mbid] = (await mb.recording(mbid)).mbid
@@ -87,6 +90,15 @@ async def plan_import(
             if recording := canonical[mbid]:
                 matches.append(recording)
         identities[file] = tuple(dict.fromkeys(matches))
+    return identities
+
+
+async def _choose_import(
+    cfg: Config,
+    mb: MusicBrainzClient,
+    files: list[FolderFile],
+    identities: dict[FolderFile, tuple[str, ...]],
+) -> tuple[Release, dict[str, object], dict[str, FolderFile]]:
     appearances: Counter[str] = Counter()
     related: dict[str, set[str]] = {}
     for ids in identities.values():
@@ -108,13 +120,16 @@ async def plan_import(
     if choice is None:
         raise ValueError("No MusicBrainz release matches at least 80% of the folder")
     release, reason = choice
-    reason.update(selected_by="AcoustID folder import")
-    mapping = mappings[release.mbid]
-    remaining = [
-        file for file in files if file not in mapping.values() and not identities.get(file)
-    ]
-    other_tracks = [track for track in release_tracks(release) if track.mbid not in mapping]
-    mapping.update(match_folder(release, other_tracks, remaining))
+    return release, reason, mappings[release.mbid]
+
+
+def _store_import(
+    conn: sqlite3.Connection,
+    root: Path,
+    release: Release,
+    reason: dict[str, object],
+    mapping: dict[str, FolderFile],
+) -> None:
     source = f"import:{root}"
     with conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -154,6 +169,21 @@ async def plan_import(
             transition(
                 conn, track_id, TrackState.MISSING, TrackState.PLANNED, Actor.USER, next_try_at=None
             )
+
+
+async def plan_import(
+    conn: sqlite3.Connection, cfg: Config, mb: MusicBrainzClient, acoustid: AcoustId, root: Path
+) -> Release:
+    root, files = await _scan_import(root)
+    identities = await _identify_files(root, files, mb, acoustid, cfg.acoustid_min_score)
+    release, reason, mapping = await _choose_import(cfg, mb, files, identities)
+    reason.update(selected_by="AcoustID folder import")
+    remaining = [
+        file for file in files if file not in mapping.values() and not identities.get(file)
+    ]
+    other_tracks = [track for track in release_tracks(release) if track.mbid not in mapping]
+    mapping.update(match_folder(release, other_tracks, remaining))
+    _store_import(conn, root, release, reason, mapping)
     return release
 
 

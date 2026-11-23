@@ -11,9 +11,9 @@ import httpx
 import pytest
 from conftest import mbid
 
+from trawl.core.catalog import ArtistRef, JsonObject
 from trawl.db.connect import open_db
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import ArtistRef, JsonObject
 from trawl.net.client import HttpClient
 from trawl.runner import service
 from trawl.runner.watch import Job, graceful_stop, watch

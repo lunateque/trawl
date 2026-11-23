@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from enum import StrEnum
 
 from trawl import __version__
-from trawl.config import Config, ConfigError, Secrets, load_secrets
+from trawl.config.models import Config, ConfigError, Secrets
+from trawl.config.secrets import load_secrets
+from trawl.core.catalog import MbDataError
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import MbDataError
 from trawl.net.client import HttpClient, HttpError
 from trawl.taste.listenbrainz import ListenBrainz, sync_listenbrainz
 from trawl.taste.releases import sync_releases

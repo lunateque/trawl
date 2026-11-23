@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement, tostring
 
-from trawl.config import ConfigError
+from trawl.config.models import ConfigError
 
 
 def command(config: Path) -> tuple[str, ...]:

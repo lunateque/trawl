@@ -8,20 +8,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from trawl.config import Config
+from trawl.config.models import Config
+from trawl.core.catalog import MbDataError, Release, Track, release_tracks
+from trawl.core.fetch import Fetched, FetchError, PartialFetchError, SourceWall
+from trawl.core.paths import linked_ancestor, unlink_regular
 from trawl.db import queue
 from trawl.db.states import Actor, TrackState, transition
-from trawl.library.place import linked_ancestor, place, staging_dir, unlink_regular
-from trawl.mb.models import MbDataError, Release
+from trawl.library.place import place, staging_dir
 from trawl.net.client import HttpError
 from trawl.runner.check import check_folder
+from trawl.runner.context import RunDeps
 from trawl.runner.progress import Progress
-from trawl.runner.run import RunDeps
-from trawl.sources.base import FetchError, PartialFetchError, SourceWall
+from trawl.sources.folder import FolderMatch
 from trawl.sources.local import LocalSource
-from trawl.sources.score import release_tracks
 from trawl.sources.soulseek import SoulseekSource
 from trawl.tag.album import AlbumTags
+from trawl.verify.policy import Decision
 from trawl.verify.probe import AudioError
 
 log = logging.getLogger(__name__)
@@ -104,6 +106,163 @@ async def _gain(conn: sqlite3.Connection, deps: RunDeps, mbid: str) -> None:
             queue.set_gain(conn, mbid, None)
 
 
+@dataclass(frozen=True)
+class _Upgrade:
+    conn: sqlite3.Connection
+    cfg: Config
+    deps: RunDeps
+    stop: asyncio.Event | None
+    progress: Progress | None
+    tracks: dict[str, Track]
+    targets: dict[str, _LibraryTrack]
+    tags: AlbumTags
+
+    def stopping(self) -> bool:
+        return self.stop is not None and self.stop.is_set()
+
+
+async def _apply_upgrade_track(
+    context: _Upgrade,
+    source: LocalSource | SoulseekSource,
+    score: float,
+    key: str,
+    track: _LibraryTrack,
+    file: Fetched,
+    decision: Decision,
+    delayed: set[str],
+) -> None:
+    conn = context.conn
+    if decision.accept:
+        try:
+            await context.tags.write(file.path, context.tracks[key])
+            final = track.path.with_suffix(file.path.suffix)
+            _replace_audio(
+                conn,
+                track,
+                file.path,
+                final,
+                source=source.name,
+                codec=file.codec,
+                bitrate=file.bitrate,
+                lossless=True,
+                verified_by=decision.verified_by,
+            )
+        except (AudioError, HttpError, MbDataError, OSError) as exc:
+            if isinstance(exc, PermissionError):
+                delayed.add(queue.after(_RETRY))
+            with conn:
+                queue.attempt(
+                    conn,
+                    track.id,
+                    source.name,
+                    file.item_ref,
+                    score,
+                    "fetch_failed",
+                    str(exc),
+                )
+            return
+        del context.targets[key]
+        lrc = file.path.with_suffix(".lrc")
+        try:
+            if lrc.is_file():
+                place(lrc, final.with_suffix(".lrc"))
+            if isinstance(source, LocalSource) and source.move:
+                await asyncio.to_thread(unlink_regular, Path(file.item_ref))
+        except OSError as exc:
+            log.warning("Cannot finish upgrade side files for %s: %s", final, exc)
+    with conn:
+        queue.attempt(
+            conn,
+            track.id,
+            source.name,
+            file.item_ref,
+            score,
+            decision.outcome,
+            decision.reason,
+        )
+
+
+async def _apply_upgrade_candidate(
+    context: _Upgrade,
+    source: LocalSource | SoulseekSource,
+    fetcher: LocalSource | SoulseekSource,
+    found: FolderMatch,
+    workspace: Path,
+    delayed: set[str],
+) -> SourceWall | None:
+    wall = None
+    try:
+        activity = (
+            context.progress.downloading(source.name, found.candidate.title)
+            if context.progress is not None
+            else nullcontext()
+        )
+        with activity:
+            files = await fetcher.fetch(found.candidate, workspace)
+    except PartialFetchError as exc:
+        files, wall = exc.files, exc.wall
+    refs = {file.item_ref: file for file in files if file.lossless}
+    mapped = {key: refs[item.ref] for key, item in found.mapping.items() if item.ref in refs}
+    checks = await check_folder(
+        context.tracks,
+        mapped,
+        found.reliable,
+        context.deps.acoustid,
+        context.deps.mb,
+        context.cfg.acoustid_min_score,
+        context.deps.tools,
+    )
+    mismatch = any(checked.mismatch for _, checked in checks.values())
+    for key, (file, result) in checks.items():
+        if context.stopping():
+            break
+        if (track := context.targets.get(key)) is None:
+            continue
+        decision = result.with_folder_guard(mismatch)
+        await _apply_upgrade_track(
+            context, source, found.candidate.score, key, track, file, decision, delayed
+        )
+    return wall
+
+
+async def _upgrade_source(
+    context: _Upgrade,
+    source: LocalSource | SoulseekSource,
+    release: Release,
+    basis: list[Track],
+    staging: Path,
+    delayed: set[str],
+) -> None:
+    fetcher = (
+        LocalSource(source.inbox, lossless_repack=source.lossless_repack)
+        if isinstance(source, LocalSource)
+        else source
+    )
+    try:
+        candidates = await source.find(
+            release, [(release, basis)], album=True, lossless_only=True, min_coverage=0
+        )
+        for found in candidates:
+            if context.stopping():
+                break
+            if not context.targets.keys() & found.mapping.keys():
+                continue
+            with TemporaryDirectory(dir=staging) as workspace:
+                if (
+                    wall := await _apply_upgrade_candidate(
+                        context, source, fetcher, found, Path(workspace), delayed
+                    )
+                ) is not None:
+                    raise wall
+            if not context.targets:
+                break
+    except SourceWall as exc:
+        with context.conn:
+            delayed.add(queue.wall(context.conn, source.name, exc.reason))
+    except (FetchError, OSError, MbDataError) as exc:
+        log.warning("Cannot search for lossless files for %s: %s", release.mbid, exc)
+
+
 async def _upgrade_release(
     conn: sqlite3.Connection,
     cfg: Config,
@@ -126,7 +285,8 @@ async def _upgrade_release(
     tracks = {track.mbid: track for track in basis}
     staging = staging_dir(cfg.library_root)
     tags = AlbumTags(cfg, deps.http, deps.mb, deps.tools, release)
-    replaced = 0
+    context = _Upgrade(conn, cfg, deps, stop, progress, tracks, targets, tags)
+    initial = len(targets)
     delayed: set[str] = set()
     for source in deps.sources:
         if stop is not None and stop.is_set():
@@ -136,117 +296,10 @@ async def _upgrade_release(
         if until := queue.pause_until(conn, source.name):
             delayed.add(until)
             continue
-        fetcher = (
-            LocalSource(source.inbox, lossless_repack=source.lossless_repack)
-            if isinstance(source, LocalSource)
-            else source
-        )
-        try:
-            candidates = await source.find(
-                release, [(release, basis)], album=True, lossless_only=True, min_coverage=0
-            )
-            for found in candidates:
-                if stop is not None and stop.is_set():
-                    break
-                if not targets.keys() & found.mapping.keys():
-                    continue
-                with TemporaryDirectory(dir=staging) as raw_workspace:
-                    workspace = Path(raw_workspace)
-                    wall = None
-                    try:
-                        activity = (
-                            progress.downloading(source.name, found.candidate.title)
-                            if progress is not None
-                            else nullcontext()
-                        )
-                        with activity:
-                            files = await fetcher.fetch(found.candidate, workspace)
-                    except PartialFetchError as exc:
-                        files, wall = exc.files, exc.wall
-                    refs = {file.item_ref: file for file in files if file.lossless}
-                    mapped = {
-                        key: refs[item.ref]
-                        for key, item in found.mapping.items()
-                        if item.ref in refs
-                    }
-                    checks = await check_folder(
-                        tracks,
-                        mapped,
-                        found.reliable,
-                        deps.acoustid,
-                        deps.mb,
-                        cfg.acoustid_min_score,
-                        deps.tools,
-                    )
-                    mismatch = any(checked.mismatch for _, checked in checks.values())
-                    for key, (file, result) in checks.items():
-                        if stop is not None and stop.is_set():
-                            break
-                        if (track := targets.get(key)) is None:
-                            continue
-                        decision = result.with_folder_guard(mismatch)
-                        if decision.accept:
-                            try:
-                                await tags.write(file.path, tracks[key])
-                                final = track.path.with_suffix(file.path.suffix)
-                                _replace_audio(
-                                    conn,
-                                    track,
-                                    file.path,
-                                    final,
-                                    source=source.name,
-                                    codec=file.codec,
-                                    bitrate=file.bitrate,
-                                    lossless=True,
-                                    verified_by=decision.verified_by,
-                                )
-                            except (AudioError, HttpError, MbDataError, OSError) as exc:
-                                if isinstance(exc, PermissionError):
-                                    delayed.add(queue.after(_RETRY))
-                                with conn:
-                                    queue.attempt(
-                                        conn,
-                                        track.id,
-                                        source.name,
-                                        file.item_ref,
-                                        found.candidate.score,
-                                        "fetch_failed",
-                                        str(exc),
-                                    )
-                                continue
-                            replaced += 1
-                            del targets[key]
-                            lrc = file.path.with_suffix(".lrc")
-                            try:
-                                if lrc.is_file():
-                                    place(lrc, final.with_suffix(".lrc"))
-                                if isinstance(source, LocalSource) and source.move:
-                                    await asyncio.to_thread(unlink_regular, Path(file.item_ref))
-                            except OSError as exc:
-                                log.warning(
-                                    "Cannot finish upgrade side files for %s: %s", final, exc
-                                )
-                        with conn:
-                            queue.attempt(
-                                conn,
-                                track.id,
-                                source.name,
-                                file.item_ref,
-                                found.candidate.score,
-                                decision.outcome,
-                                decision.reason,
-                            )
-                    if wall is not None:
-                        raise wall
-                if not targets:
-                    break
-        except SourceWall as exc:
-            with conn:
-                delayed.add(queue.wall(conn, source.name, exc.reason))
-        except (FetchError, OSError, MbDataError) as exc:
-            log.warning("Cannot search for lossless files for %s: %s", release.mbid, exc)
+        await _upgrade_source(context, source, release, basis, staging, delayed)
         if not targets:
             break
+    replaced = initial - len(targets)
     if replaced:
         await _gain(conn, deps, release.mbid)
     return replaced, min(delayed) if targets and delayed else None

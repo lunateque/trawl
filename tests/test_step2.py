@@ -4,7 +4,8 @@ import pytest
 from typer.testing import CliRunner
 
 from trawl.cli import app
-from trawl.config import ConfigError, load
+from trawl.config.load import load
+from trawl.config.models import ConfigError
 
 
 def test_run_requires_acoustid(tmp_path: Path) -> None:

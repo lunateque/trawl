@@ -71,19 +71,21 @@
 
 ```
 src/trawl/
-  cli.py            команды typer
-  config.py         загрузка и проверка TOML, секреты
+  cli/              группы команд Typer, общий контекст, doctor
+  config/           модели настроек, загрузка и проверка TOML, отдельный загрузчик секретов
+  core/             общие модели каталога и кандидатов, аудиоконтракты, нормализация, пути и ссылки
   db/               схема, миграции (нумерованные .sql), запросы, переходы состояний
   net/              общий httpx-клиент, лимитеры на сервис, повторы, Retry-After
   mb/               клиент MusicBrainz и Cover Art Archive
   resolve/          ссылки и внешние треки (Spotify, Яндекс, YouTube Music) → MBID
   taste/            listenbrainz.py, yandex.py, spotify.py, releases.py
   plan/             желание → релиз → треки; правила выбора релиза
-  sources/          base.py (протокол), local.py, soulseek.py, ytmusic.py, score.py
+  sources/          base.py (протокол), local.py, soulseek.py, slskd.py (ответы API), ytmusic.py, score.py
   verify/           probe.py (ffprobe), fingerprint.py (fpcalc + AcoustID), policy.py
   tag/              mapping.py (MB → поля), writer.py (FLAC/Opus/M4A/MP3), cover.py, lyrics.py, replaygain.py
   library/          layout.py (пути), place.py (staging и атомарная укладка)
-  runner/           очередь, воркеры, пауза источников
+  runner/           run.py (оркестрация), editions.py (издания), search.py (поиск),
+                    fetch.py (загрузка и проверка), finalize.py (теги и укладка), upgrade.py
   tui/              приложение Textual
 ```
 

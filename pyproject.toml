@@ -19,7 +19,16 @@ dependencies = [
 trawl = "trawl.cli:app"
 
 [dependency-groups]
-dev = ["ruff", "pyright", "pytest", "pytest-asyncio"]
+dev = [
+    "ruff",
+    "pyright",
+    "pytest",
+    "pytest-asyncio",
+    "import-linter>=2.15",
+    "ty",
+    "pytest-cov",
+    "pre-commit",
+]
 
 [build-system]
 requires = ["uv_build>=0.13,<0.14"]
@@ -30,10 +39,14 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "PTH", "S", "T20", "N"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "PTH", "S", "T20", "N", "C90"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
+"scripts/check_module_size.py" = ["T201"]
 
 [tool.ruff.format]
 exclude = ["docs/**"]
@@ -48,3 +61,60 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = ["tools: requires external audio tools"]
+
+[tool.coverage.run]
+source = ["trawl"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+precision = 2
+
+[tool.ty.environment]
+root = ["src", "tests"]
+
+[tool.importlinter]
+root_package = "trawl"
+
+[[tool.importlinter.contracts]]
+id = "c1"
+name = "package layers"
+type = "layers"
+containers = ["trawl"]
+exhaustive = true
+layers = [
+    "cli",
+    "tui",
+    "runner",
+    "taste",
+    "plan | resolve",
+    "sources | tag",
+    "library",
+    "verify",
+    "mb",
+    "net | db",
+    "log",
+    "config",
+    "core",
+]
+
+[[tool.importlinter.contracts]]
+id = "c2"
+name = "core imports no other trawl package"
+type = "forbidden"
+source_modules = ["trawl.core"]
+forbidden_modules = ["trawl.cli", "trawl.tui", "trawl.runner", "trawl.taste", "trawl.plan", "trawl.resolve", "trawl.sources", "trawl.tag", "trawl.library", "trawl.verify", "trawl.mb", "trawl.db", "trawl.net", "trawl.config", "trawl.log"]
+
+[[tool.importlinter.contracts]]
+id = "c3"
+name = "database code imports only core"
+type = "forbidden"
+source_modules = ["trawl.db"]
+forbidden_modules = ["trawl.cli", "trawl.tui", "trawl.runner", "trawl.taste", "trawl.plan", "trawl.resolve", "trawl.sources", "trawl.tag", "trawl.library", "trawl.verify", "trawl.mb", "trawl.net", "trawl.config", "trawl.log"]
+
+[[tool.importlinter.contracts]]
+id = "c4"
+name = "entry points have no domain callers"
+type = "forbidden"
+source_modules = ["trawl.runner", "trawl.taste", "trawl.plan", "trawl.resolve", "trawl.sources", "trawl.tag", "trawl.library", "trawl.verify", "trawl.mb", "trawl.db", "trawl.net", "trawl.config", "trawl.core", "trawl.log"]
+forbidden_modules = ["trawl.cli", "trawl.tui"]

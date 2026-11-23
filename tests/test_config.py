@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from trawl.config import ConfigError, MbConfig, PlanConfig, config_path, load
+from trawl.config.load import config_path, load
+from trawl.config.models import ConfigError, MbConfig, PlanConfig
 
 MINIMAL = 'library_root = "library"\ncontact_email = "owner@example.com"\n'
 

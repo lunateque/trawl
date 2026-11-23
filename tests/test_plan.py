@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from trawl.config import PlanConfig
+from trawl.config.models import PlanConfig
 from trawl.db.connect import open_db
 from trawl.db.repo import Kind, Origin, Scope
 from trawl.mb.client import MusicBrainzClient

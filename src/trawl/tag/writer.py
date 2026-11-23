@@ -10,7 +10,7 @@ from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm  # pyright: ignore[reportMiss
 from mutagen.oggopus import OggOpus  # pyright: ignore[reportMissingTypeStubs]
 from mutagen.oggvorbis import OggVorbis  # pyright: ignore[reportMissingTypeStubs]
 
-from trawl.tag.mapping import TagFields
+from trawl.core.tags import TagFields
 from trawl.verify.probe import AudioError
 
 # Vorbis comment, MP4 atom/freeform suffix, ID3 frame/description respectively.

@@ -5,21 +5,15 @@ from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Literal
 
-from trawl.config import (
-    Config,
-    ConfigError,
-    ProxyConfig,
-    load,
-    load_secrets,
-    secrets_permissions_warning,
-    slskd_insecure,
-)
+from trawl.config.load import load
+from trawl.config.models import Config, ConfigError, ProxyConfig
+from trawl.config.secrets import load_secrets, secrets_permissions_warning, slskd_insecure
+from trawl.core.fetch import FetchError, SourceWall
 from trawl.db.connect import open_db
 from trawl.library.place import staging_dir
 from trawl.mb.client import MusicBrainzClient
 from trawl.net.client import HttpClient, HttpError
 from trawl.net.limiter import RateLimiter
-from trawl.sources.base import FetchError, SourceWall
 from trawl.sources.soulseek import SoulseekSource
 from trawl.tag.replaygain import supports_opus
 from trawl.taste.sync import ERRORS, check_source, enabled_sources, read_secrets, taste_http

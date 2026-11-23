@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from trawl.mb.models import MbDataError, array_value, object_value, parse_mbid
+from trawl.core.catalog import MbDataError, array_value, object_value, parse_mbid
 from trawl.net.client import HttpClient, HttpError
 from trawl.verify.probe import AudioError, command
 

@@ -9,11 +9,11 @@ import pytest
 from conftest import mbid
 from yandex_music import Client, JSONType, Track, TracksList  # pyright: ignore[reportMissingTypeStubs]
 
-from trawl.config import Config, ListenBrainzConfig, MbConfig, PlanConfig
+from trawl.config.models import Config, ListenBrainzConfig, MbConfig, PlanConfig
+from trawl.core.catalog import JsonObject
 from trawl.db.connect import open_db
 from trawl.db.repo import Kind, Origin, Scope
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import JsonObject
 from trawl.net.client import HttpClient
 from trawl.resolve.match import ExternalTrack, Resolved, Unresolved, resolve_album, resolve_track
 from trawl.taste.listenbrainz import ListenBrainz, sync_listenbrainz, tier_for

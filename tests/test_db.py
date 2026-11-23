@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from trawl import cli
 from trawl.cli import app
+from trawl.cli import review as cli
 from trawl.db import queue
 from trawl.db.connect import open_db
 from trawl.db.states import Actor, TrackState, transition
@@ -155,7 +155,7 @@ def test_pick_persists_while_another_runner_holds_lock(
     async def no_runner(*args: object, **kwargs: object) -> None:
         pytest.fail("pick must not launch a second runner")
 
-    monkeypatch.setattr(cli, "_process", no_runner)
+    monkeypatch.setattr(cli, "process", no_runner)
     with acquire(data):
         result = CliRunner().invoke(
             app, ["--config", str(config), "pick", "1", "https://youtu.be/a1b2c3d4e5f"]
