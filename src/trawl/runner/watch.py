@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 import sqlite3
+import sys
 import time
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager, suppress
@@ -29,7 +30,7 @@ async def sleep_until_stop(stop: asyncio.Event, delay: float) -> None:
 def graceful_stop(stop: asyncio.Event) -> Generator[None]:
     loop = asyncio.get_running_loop()
     signals = [signal.SIGINT, signal.SIGTERM]
-    if hasattr(signal, "SIGBREAK"):
+    if sys.platform == "win32":
         signals.append(signal.SIGBREAK)
     installed: list[tuple[int, int | Callable[[int, FrameType | None], object] | None]] = []
 

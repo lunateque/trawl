@@ -11,9 +11,11 @@ log = logging.getLogger(__name__)
 
 
 def _linked(info: os.stat_result) -> bool:
-    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == (
-        stat.IO_REPARSE_TAG_MOUNT_POINT
-    )
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    if sys.platform == "win32":
+        return info.st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    return False
 
 
 def is_link(path: Path) -> bool:
