@@ -3,7 +3,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 from trawl.db.states import Actor, TrackState, transition
 
@@ -104,12 +104,17 @@ def attempt(
     score: float | None,
     outcome: Outcome,
     reason: str,
-) -> None:
-    conn.execute(
-        """INSERT INTO attempts(track_id,source,candidate_ref,score,outcome,reason,at)
-        VALUES(?,?,?,?,?,?,?)""",
-        (track, source, ref, score, outcome, reason, now()),
-    )
+    *,
+    candidate_key: str | None = None,
+) -> int:
+    row = conn.execute(
+        """INSERT INTO attempts(track_id,source,candidate_ref,score,outcome,reason,at,candidate_key)
+        VALUES(?,?,?,?,?,?,?,?) RETURNING id""",
+        (track, source, ref, score, outcome, reason, now(), candidate_key),
+    ).fetchone()
+    if row is None:
+        raise sqlite3.IntegrityError("Attempt insert did not return an ID")
+    return int(row[0])
 
 
 @dataclass(frozen=True)
@@ -210,7 +215,33 @@ def skip(conn: sqlite3.Connection, target: str | int) -> int:
     )
 
 
-def pin(conn: sqlite3.Connection, track_id: int, source: str, ref: str) -> bool:
+@dataclass(frozen=True)
+class Pin:
+    source: str
+    ref: str
+    item_ref: str | None = None
+    size: int | None = None
+
+    @classmethod
+    def load(cls, raw: str) -> Self:
+        pin = json.loads(raw)
+        return cls(pin["source"], pin["ref"], pin.get("item_ref"), pin.get("size"))
+
+
+def pin(
+    conn: sqlite3.Connection,
+    track_id: int,
+    source: str,
+    ref: str,
+    *,
+    item_ref: str | None = None,
+    size: int | None = None,
+) -> bool:
+    value: dict[str, str | int] = {"source": source, "ref": ref}
+    if item_ref is not None:
+        value["item_ref"] = item_ref
+    if size is not None:
+        value["size"] = size
     row = conn.execute(
         "SELECT state FROM tracks WHERE id=? AND state IN ('missing','searching','planned')",
         (track_id,),
@@ -221,7 +252,7 @@ def pin(conn: sqlite3.Connection, track_id: int, source: str, ref: str) -> bool:
         TrackState(row[0]),
         TrackState.SEARCHING,
         Actor.USER,
-        pinned_candidate=json.dumps({"source": source, "ref": ref}),
+        pinned_candidate=json.dumps(value),
         next_try_at=None,
     )
 

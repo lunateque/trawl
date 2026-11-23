@@ -18,6 +18,7 @@ from trawl.verify.probe import AudioError, Probe
 class Checked:
     decision: Decision
     mismatch: bool = False
+    comparison: str = ""
 
     def with_folder_guard(self, mismatch: bool) -> Decision:
         if mismatch and self.decision.verified_by == "duration":
@@ -35,6 +36,14 @@ class Evidence:
     audio: Probe | None
     hits: tuple[AcoustResult, ...] = ()
     error: Checked | None = None
+
+    def comparison(self) -> str:
+        if not self.hits:
+            return "AcoustID returned no recording matches"
+        return "; ".join(
+            f"{', '.join(hit.recording_ids) or 'no recording ID'} ({hit.score:.3f})"
+            for hit in self.hits
+        )
 
 
 async def check(
@@ -80,7 +89,12 @@ async def inspect(
         return Evidence(audio, tuple(await acoustid.lookup(duration, fp)))
     except (HttpError, MbDataError) as exc:
         return Evidence(
-            audio, error=Checked(Decision(False, None, str(exc), "rejected_verify"), True)
+            audio,
+            error=Checked(
+                Decision(False, None, str(exc), "rejected_verify"),
+                True,
+                "AcoustID lookup did not complete",
+            ),
         )
 
 
@@ -113,9 +127,11 @@ async def evaluate(
                     same.add(mbid)
                     break
         result = decide(track, audio, hits, reliable, False, same.__contains__, min_score=min_score)
-        return Checked(result, bool(ids) and not result.accept)
+        return Checked(result, bool(ids) and not result.accept, evidence.comparison())
     except (HttpError, MbDataError) as exc:
-        return Checked(Decision(False, None, str(exc), "rejected_verify"), True)
+        return Checked(
+            Decision(False, None, str(exc), "rejected_verify"), True, evidence.comparison()
+        )
 
 
 async def check_folder(

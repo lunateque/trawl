@@ -31,8 +31,11 @@ def place(staged: Path, final: Path) -> bool:
 def cleanup_staging(conn: sqlite3.Connection, root: Path) -> None:
     keep: set[Path] = set()
     for (raw,) in conn.execute(
-        "SELECT path FROM tracks WHERE state IN ('fetched','verified','tagged') "
-        "AND path IS NOT NULL"
+        """SELECT path FROM tracks WHERE state IN ('fetched','verified','tagged')
+        AND path IS NOT NULL
+        UNION ALL
+        SELECT r.path FROM current_rejections r JOIN tracks t ON t.id=r.track_id
+        WHERE t.state IN ('searching','missing')"""
     ):
         path = Path(raw).resolve()
         keep.update((path, path.with_suffix(".lrc"), path.parent / "cover.jpg"))

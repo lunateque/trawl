@@ -4,7 +4,15 @@ version = "0.1.0"
 description = "Plan and build a local music library"
 requires-python = ">=3.12"
 dependencies = [
-    "httpx", "typer", "rich", "platformdirs", "mutagen", "yt-dlp", "ytmusicapi", "yandex-music",
+    "httpx",
+    "typer",
+    "rich",
+    "platformdirs",
+    "mutagen",
+    "yt-dlp",
+    "ytmusicapi",
+    "yandex-music",
+    "textual>=8.2.8",
 ]
 
 [project.scripts]

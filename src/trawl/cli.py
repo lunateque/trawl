@@ -1,7 +1,7 @@
 import asyncio
 import sqlite3
 from collections.abc import AsyncGenerator, Generator, Sequence
-from contextlib import asynccontextmanager, closing, contextmanager
+from contextlib import asynccontextmanager, closing, contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -15,7 +15,7 @@ from rich.text import Text
 
 from trawl import __version__, doctor, log
 from trawl.config import Config, ConfigError, Secrets, config_path, load, load_secrets
-from trawl.db import queue, repo
+from trawl.db import queue, repo, review
 from trawl.db.connect import open_db
 from trawl.db.repo import Kind, Origin, Scope
 from trawl.mb.client import MusicBrainzClient
@@ -35,6 +35,7 @@ from trawl.plan.wants import (
 )
 from trawl.resolve.match import resolve_artist
 from trawl.runner.lock import LockBusy, acquire
+from trawl.runner.progress import Progress
 from trawl.runner.run import RunDeps, run_once
 from trawl.runner.service import service as manage_service
 from trawl.runner.upgrade import upgrade_pass
@@ -43,13 +44,14 @@ from trawl.runner.watch import watch as watch_jobs
 from trawl.sources.base import Source
 from trawl.sources.local import LocalSource
 from trawl.sources.soulseek import SoulseekSource
-from trawl.sources.ytmusic import YTMusic, YTMusicSource, video_id
+from trawl.sources.ytmusic import YTMusic, YTMusicSource
 from trawl.taste.links import entity, metadata
 from trawl.taste.oauth import auth_spotify
 from trawl.taste.releases import save_artist
 from trawl.taste.store import DEFAULT_SCOPE, SyncReport, bind, ingest
 from trawl.taste.sync import ERRORS as TASTE_ERRORS
 from trawl.taste.sync import TasteSource, read_secrets, sync_taste, taste_http
+from trawl.tui.data import explain_text
 from trawl.verify.fingerprint import AcoustId
 from trawl.verify.probe import AudioError
 
@@ -77,11 +79,13 @@ def _fail(message: str, code: int) -> Never:
 
 
 @contextmanager
-def _session(options: Options) -> Generator[tuple[Config, sqlite3.Connection]]:
+def _session(
+    options: Options, *, terminal: bool = True
+) -> Generator[tuple[Config, sqlite3.Connection]]:
     try:
         cfg = load(options.config)
         with (
-            log.setup(cfg.data_dir, options.verbose),
+            log.setup(cfg.data_dir, options.verbose, terminal=terminal),
             closing(open_db(cfg.data_dir / "trawl.sqlite")) as conn,
         ):
             yield cfg, conn
@@ -268,7 +272,9 @@ async def _run_deps(
         raise ConfigError("Processing requires a configuration file")
     secrets = load_secrets(cfg.source_path)
     if not (key := secrets.acoustid_key):
-        _fail("Configure acoustid_key in secrets.toml (https://acoustid.org/new-application)", 1)
+        raise ConfigError(
+            "Configure acoustid_key in secrets.toml (https://acoustid.org/new-application)"
+        )
     http = HttpClient(
         f"trawl/{__version__} ( {cfg.contact_email} )",
         {
@@ -325,10 +331,12 @@ async def _process(
     only: int | None = None,
     *,
     stop: asyncio.Event | None = None,
+    progress: Progress | None = None,
 ) -> None:
     async with _run_deps(cfg, conn) as (secrets, deps):
-        report = await run_once(conn, cfg, secrets, deps, only=only, stop=stop)
-    _show_run(report.states, report.outcomes, report.pauses)
+        report = await run_once(conn, cfg, secrets, deps, only=only, stop=stop, progress=progress)
+    if progress is None:
+        _show_run(report.states, report.outcomes, report.pauses)
 
 
 def _show_run(
@@ -360,12 +368,18 @@ def run(
             _fail(str(exc), 3)
 
 
-async def _watch(cfg: Config, conn: sqlite3.Connection) -> None:
-    stop = asyncio.Event()
+async def _watch(
+    cfg: Config,
+    conn: sqlite3.Connection,
+    stop: asyncio.Event | None = None,
+    progress: Progress | None = None,
+) -> None:
+    cli_signals = stop is None
+    stop = stop if stop is not None else asyncio.Event()
 
     async def taste(source: TasteSource) -> None:
         async with make_mb(cfg, conn) as mb:
-            await _sync(conn, mb, cfg, source, releases=False)
+            await _sync(conn, mb, cfg, source, releases=False, terminal=progress is None)
 
     async def planning() -> None:
         async with make_mb(cfg, conn) as mb:
@@ -378,23 +392,58 @@ async def _watch(cfg: Config, conn: sqlite3.Connection) -> None:
             conn.execute("BEGIN IMMEDIATE")
             queue.retry(conn, skipped=False, due=queue.now())
 
-    with graceful_stop(stop):
+    with graceful_stop(stop) if cli_signals else nullcontext():
         await watch_jobs(
             conn,
             [
                 Job("taste", cfg.watch.taste_every, lambda: taste(TasteSource.ALL)),
                 Job("releases", cfg.watch.releases_every, lambda: taste(TasteSource.RELEASES)),
                 Job("plan", cfg.watch.queue_every, planning),
-                Job("run", cfg.watch.queue_every, lambda: _process(cfg, conn, stop=stop)),
+                Job(
+                    "run",
+                    cfg.watch.queue_every,
+                    lambda: _process(cfg, conn, stop=stop, progress=progress),
+                ),
                 Job("retry", cfg.watch.queue_every, retry_due),
                 Job(
                     "upgrade",
                     cfg.watch.upgrade_every,
-                    lambda: _upgrade(cfg, conn, False, stop=stop),
+                    lambda: _upgrade(cfg, conn, False, stop=stop, progress=progress),
                 ),
             ],
             stop,
         )
+
+
+@app.command()
+def tui(ctx: typer.Context) -> None:
+    """Monitor the queue and make manual decisions in the terminal."""
+    from trawl.tui.app import TrawlApp
+
+    with _session(ctx.obj, terminal=False) as (cfg, conn):
+
+        async def embedded(stop: asyncio.Event, progress: Progress) -> None:
+            with closing(open_db(cfg.data_dir / "trawl.sqlite")) as runner_conn:
+                await _watch(cfg, runner_conn, stop, progress)
+
+        async def launch() -> None:
+            dashboard = TrawlApp(cfg, conn, embedded)
+            interrupt = asyncio.Event()
+
+            async def close_on_signal() -> None:
+                await interrupt.wait()
+                await dashboard.action_quit()
+
+            with graceful_stop(interrupt):
+                task = asyncio.create_task(close_on_signal())
+                try:
+                    await dashboard.run_async()
+                finally:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+
+        asyncio.run(launch())
 
 
 async def _import_folder(cfg: Config, conn: sqlite3.Connection, directory: Path) -> None:
@@ -422,14 +471,20 @@ def import_command(
 
 
 async def _upgrade(
-    cfg: Config, conn: sqlite3.Connection, now: bool, *, stop: asyncio.Event | None = None
+    cfg: Config,
+    conn: sqlite3.Connection,
+    now: bool,
+    *,
+    stop: asyncio.Event | None = None,
+    progress: Progress | None = None,
 ) -> None:
     async with _run_deps(cfg, conn) as (_, deps):
-        report = await upgrade_pass(conn, cfg, deps, now=now, stop=stop)
-    typer.echo(
-        f"Releases checked: {report.checked}; "
-        f"tracks upgraded: {report.replaced}; deferred: {report.deferred}"
-    )
+        report = await upgrade_pass(conn, cfg, deps, now=now, stop=stop, progress=progress)
+    if progress is None:
+        typer.echo(
+            f"Releases checked: {report.checked}; "
+            f"tracks upgraded: {report.replaced}; deferred: {report.deferred}"
+        )
 
 
 @app.command()
@@ -455,26 +510,18 @@ def retry(ctx: typer.Context, skipped: Annotated[bool, typer.Option("--skipped")
 @app.command()
 def pick(ctx: typer.Context, track: int, candidate: str) -> None:
     """Verify a particular YouTube video or local file for a track."""
-    if "://" in candidate:
-        try:
-            ref, source = video_id(candidate), "ytmusic"
-        except ValueError as exc:
-            _fail(str(exc), 2)
-    else:
-        path = Path(candidate).resolve()
-        if not path.is_file():
-            _fail(f"No audio file at {path}", 2)
-        ref, source = str(path), "path"
     with _session(ctx.obj) as (cfg, conn):
+        try:
+            pin = review.parse_pin(candidate, cfg.sources.order)
+        except (OSError, ValueError) as exc:
+            _fail(str(exc), 2)
         if cfg.source_path is None:
             raise ConfigError("Pick requires a configuration file")
         if not load_secrets(cfg.source_path).acoustid_key:
             _fail("AcoustID key required for pick; configure acoustid_key in secrets.toml", 1)
-        if source == "ytmusic" and source not in cfg.sources.order:
-            _fail("Enable ytmusic in sources.order to pick a YouTube video", 1)
         with conn:
             conn.execute("BEGIN IMMEDIATE")
-            if not queue.pin(conn, track, source, ref):
+            if not queue.pin(conn, track, pin.source, pin.ref):
                 _fail(f"Track {track} cannot be picked in its current state", 1)
         try:
             with acquire(cfg.data_dir):
@@ -547,23 +594,7 @@ def explain(ctx: typer.Context, target: str) -> None:
         explanation = repo.explain(conn, kind, value)
     if not explanation.releases:
         _fail(f"No planned tracks match {target}", 1)
-    console = Console()
-    for release in explanation.releases:
-        typer.echo(f"Release: {release.title} ({release.mbid})\nchoice_reason:")
-        console.print_json(release.choice_reason)
-    typer.echo("Wants:")
-    for want in explanation.wants:
-        typer.echo(
-            f"  #{want.id} {want.kind} | {want.origin} | {want.origin_ref} | {want.created_at}"
-        )
-    typer.echo("Attempts:")
-    if not explanation.attempts:
-        typer.echo("  None")
-    for attempt in explanation.attempts:
-        typer.echo(
-            f"  Track {attempt.track_id} | {attempt.at} | {attempt.source} | {attempt.outcome}"
-            f" | {attempt.candidate_ref or '-'} | score: {attempt.score} | {attempt.reason or '-'}"
-        )
+    typer.echo(explain_text(explanation))
 
 
 @app.command("doctor")
@@ -588,13 +619,17 @@ async def _sync(
     source: TasteSource,
     *,
     releases: bool = True,
+    terminal: bool = True,
 ) -> None:
     results = await sync_taste(conn, mb, cfg, source, releases=releases)
-    for name, report, _ in results:
-        detail = f"; {report.message}" if report.message else ""
-        typer.echo(f"{name}: {report.wants} wants; {report.unresolved} unresolved{detail}")
+    if terminal:
+        for name, report, _ in results:
+            detail = f"; {report.message}" if report.message else ""
+            typer.echo(f"{name}: {report.wants} wants; {report.unresolved} unresolved{detail}")
     if any(not ok for _, _, ok in results):
-        raise typer.Exit(1)
+        if terminal:
+            raise typer.Exit(1)
+        raise ConfigError("taste synchronization failed")
 
 
 @app.command("sync-taste")

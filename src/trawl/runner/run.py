@@ -1,16 +1,16 @@
 import asyncio
-import json
 import logging
 import shutil
 import sqlite3
 import tempfile
 from collections import defaultdict, deque
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from itertools import groupby
 from pathlib import Path, PurePath
 
 from trawl.config import Config, Secrets
-from trawl.db import queue, repo
+from trawl.db import queue, repo, review
 from trawl.db.queue import Work
 from trawl.db.states import Actor, transition
 from trawl.db.states import TrackState as State
@@ -18,11 +18,12 @@ from trawl.library.layout import render, resolve_collision
 from trawl.library.place import cleanup_staging, place, staging_dir
 from trawl.library.repack import repack_needed
 from trawl.mb.client import MusicBrainzClient
-from trawl.mb.models import MbDataError, Release, Track, object_value
+from trawl.mb.models import MbDataError, Release, Track
 from trawl.net.client import HttpClient, HttpError
 from trawl.plan.import_folder import imported_folder
 from trawl.plan.switch import can_switch, switch_edition
 from trawl.runner.check import check, check_folder
+from trawl.runner.progress import Progress
 from trawl.runner.tools import AudioTools
 from trawl.sources.base import (
     Candidate,
@@ -72,12 +73,13 @@ async def run_once(
     only: int | None = None,
     release_mbid: str | None = None,
     stop: asyncio.Event | None = None,
+    progress: Progress | None = None,
 ) -> RunReport:
     if not secrets.acoustid_key:
         raise ValueError(
             "Configure acoustid_key in secrets.toml (https://acoustid.org/new-application)"
         )
-    runner = _Runner(conn, cfg, deps, stop)
+    runner = _Runner(conn, cfg, deps, stop, progress)
     cleanup_staging(conn, runner.stage)
     start = conn.execute("SELECT COALESCE(max(id),0) FROM attempts").fetchone()[0]
     groups = [
@@ -107,12 +109,18 @@ async def run_once(
 
 class _Runner:
     def __init__(
-        self, conn: sqlite3.Connection, cfg: Config, deps: RunDeps, stop: asyncio.Event | None
+        self,
+        conn: sqlite3.Connection,
+        cfg: Config,
+        deps: RunDeps,
+        stop: asyncio.Event | None,
+        progress: Progress | None,
     ) -> None:
         self.conn = conn
         self.cfg = cfg
         self.deps = deps
         self.stop = stop
+        self.progress = progress
         self.stage = staging_dir(cfg.library_root)
         self.releases: dict[str, Release] = {}
         self.youtube = asyncio.Semaphore(cfg.sources.ytmusic_concurrency)
@@ -233,7 +241,7 @@ class _Runner:
                 row,
                 State.MISSING,
                 path=None,
-                pinned_candidate=None,
+                pinned_candidate=row.pin if pinned else None,
                 next_try_at=None if pinned else queue.after(self.cfg.retry_missing_days * 86400),
             )
 
@@ -321,6 +329,9 @@ class _Runner:
     ) -> Release | None:
         delayed: set[str] = set()
         tried: set[str] = set()
+        with self.conn:
+            for row in misses.values():
+                review.clear_candidates(self.conn, row.id)
         imports = imported_folder(self.conn, release)
         for imported in imports:
             if self.stopping():
@@ -333,6 +344,7 @@ class _Runner:
             todo = {key: item for key, item in imported.mapping.items() if key in misses}
             if todo:
                 tried.update(todo)
+                self.remember([(imported.candidate, todo, imported.reliable)], misses)
                 await self.fetch(
                     source, imported.candidate, todo, misses, tracks, imported.reliable
                 )
@@ -359,6 +371,7 @@ class _Runner:
                         ranked = await self.candidate_search(source, release, basis, album)
                 else:
                     ranked = await self.candidate_search(source, release, basis, album)
+                self.remember(ranked, misses)
                 for candidate, mapping, reliable in ranked:
                     if self.stopping():
                         return None
@@ -407,9 +420,22 @@ class _Runner:
             self.missing(row)
         return None
 
+    def remember(
+        self,
+        ranked: list[tuple[Candidate, dict[str, CandidateItem], bool]],
+        misses: dict[str, Work],
+    ) -> None:
+        with self.conn:
+            for candidate, mapping, _ in ranked:
+                for mbid, item in mapping.items():
+                    if (row := misses.get(mbid)) is not None:
+                        review.remember(self.conn, row.id, candidate, item)
+
     async def pinned(self, row: Work, track: Track) -> None:
-        pin = object_value(json.loads(row.pin or "{}"))
-        name, ref = str(pin["source"]), str(pin["ref"])
+        if row.pin is None:
+            raise ValueError("Cannot fetch a pinned track without a pin")
+        pin = queue.Pin.load(row.pin)
+        name, ref = pin.source, pin.ref
         remaining = {track.mbid: row}
         candidate = Candidate(
             name,
@@ -420,10 +446,24 @@ class _Runner:
             None,
             False,
             False,
-            (CandidateItem(ref, None, track.length_ms, track.title),),
+            (
+                CandidateItem(
+                    pin.item_ref or ref,
+                    None,
+                    track.length_ms,
+                    track.title,
+                    size=pin.size,
+                ),
+            ),
         )
         if name == "path":
             source: Source = _LocalPin(self.deps.tools, self.cfg.sources.lossless_repack)
+        elif name == "local":
+            source = LocalSource(
+                (),
+                move=self.cfg.sources.local.move,
+                lossless_repack=self.cfg.sources.lossless_repack,
+            )
         else:
             selected = next((source for source in self.deps.sources if source.name == name), None)
             if selected is None:
@@ -449,7 +489,17 @@ class _Runner:
         except SourceWall as exc:
             with self.conn:
                 until = queue.wall(self.conn, source.name, exc.reason)
-                queue.attempt(self.conn, row.id, name, ref, None, "fetch_failed", exc.reason)
+                if remaining:
+                    queue.attempt(
+                        self.conn,
+                        row.id,
+                        name,
+                        pin.item_ref or ref,
+                        None,
+                        "fetch_failed",
+                        exc.reason,
+                        candidate_key=ref,
+                    )
             self.requeue(remaining, until)
             return
         if remaining:
@@ -475,9 +525,9 @@ class _Runner:
         try:
             if source.name == "ytmusic":
                 async with self.youtube:
-                    files = await source.fetch(limited, self.workspace())
+                    files = await self.download(fetcher, limited)
             else:
-                files = await fetcher.fetch(limited, self.workspace())
+                files = await self.download(fetcher, limited)
         except PartialFetchError as exc:
             files, issues, wall = exc.files, exc.issues, exc.wall
         except (FetchError, OSError, AudioError) as exc:
@@ -494,6 +544,7 @@ class _Runner:
                         candidate.score,
                         outcome,
                         str(exc),
+                        candidate_key=candidate.ref,
                     )
             return
         with self.conn:
@@ -518,6 +569,7 @@ class _Runner:
                             candidate.score,
                             outcome,
                             issue.reason if issue else "file not downloaded",
+                            candidate_key=candidate.ref,
                         )
                 continue
             selected[mbid] = fetched.popleft()
@@ -562,6 +614,8 @@ class _Runner:
                     continue
             row = replace(row, state=State.FETCHED)
             decision = checked.with_folder_guard(mismatch)
+            retain = decision.outcome == "rejected_verify"
+            wait_for_user = retain and row.pin is not None
             with self.conn:
                 if decision.accept:
                     changed = self.change(
@@ -573,7 +627,24 @@ class _Runner:
                     )
                 else:
                     changed = self.change(row, State.SEARCHING, path=None)
-                if changed:
+                    if changed and wait_for_user:
+                        changed = self.change(
+                            replace(row, state=State.SEARCHING),
+                            State.MISSING,
+                            next_try_at=None,
+                        )
+                if changed and retain:
+                    review.reject(
+                        self.conn,
+                        row.id,
+                        source.name,
+                        candidate.ref,
+                        candidate.score,
+                        decision.reason,
+                        file,
+                        checked.comparison,
+                    )
+                elif changed:
                     queue.attempt(
                         self.conn,
                         row.id,
@@ -582,16 +653,26 @@ class _Runner:
                         candidate.score,
                         decision.outcome,
                         decision.reason,
+                        candidate_key=candidate.ref,
                     )
             if decision.accept and changed and isinstance(source, LocalSource) and source.move:
                 try:
                     await asyncio.to_thread(Path(file.item_ref).unlink)
                 except OSError as exc:
                     log.warning("Cannot remove local original %s: %s", file.item_ref, exc)
-            if decision.accept or not changed:
+            if decision.accept or wait_for_user or not changed:
                 del misses[mbid]
         if wall is not None:
             raise wall
+
+    async def download(self, source: Source, candidate: Candidate) -> list[Fetched]:
+        activity = (
+            self.progress.downloading(source.name, candidate.title)
+            if self.progress is not None
+            else nullcontext()
+        )
+        with activity:
+            return await source.fetch(candidate, self.workspace())
 
     async def finish(self, release: Release, tracks: dict[str, Track], ids: set[int]) -> None:
         tags = AlbumTags(self.cfg, self.deps.http, self.deps.mb, self.deps.tools, release)

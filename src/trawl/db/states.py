@@ -41,6 +41,7 @@ ALLOWED: Mapping[tuple[TrackState, TrackState], frozenset[Actor]] = {
     (_M, _S): _USER,
     (_S, _S): _USER,
     (_P, _V): _RUN,
+    (_M, _V): _USER,
     (_D, _D): _RUN,
     **{(state, _K): _USER for state in TrackState if state != _D},
 }

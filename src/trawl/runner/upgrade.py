@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import sqlite3
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,6 +15,7 @@ from trawl.library.place import place, staging_dir
 from trawl.mb.models import MbDataError, Release
 from trawl.net.client import HttpError
 from trawl.runner.check import check_folder
+from trawl.runner.progress import Progress
 from trawl.runner.run import RunDeps
 from trawl.sources.base import FetchError, PartialFetchError, SourceWall
 from trawl.sources.local import LocalSource
@@ -105,6 +107,7 @@ async def _upgrade_release(
     deps: RunDeps,
     release: Release,
     stop: asyncio.Event | None,
+    progress: Progress | None,
 ) -> tuple[int, str | None]:
     targets = {
         mbid: _LibraryTrack(track_id, Path(path))
@@ -148,7 +151,13 @@ async def _upgrade_release(
                     workspace = Path(raw_workspace)
                     wall = None
                     try:
-                        files = await fetcher.fetch(found.candidate, workspace)
+                        activity = (
+                            progress.downloading(source.name, found.candidate.title)
+                            if progress is not None
+                            else nullcontext()
+                        )
+                        with activity:
+                            files = await fetcher.fetch(found.candidate, workspace)
                     except PartialFetchError as exc:
                         files, wall = exc.files, exc.wall
                     refs = {file.item_ref: file for file in files if file.lossless}
@@ -247,6 +256,7 @@ async def upgrade_pass(
     *,
     now: bool = False,
     stop: asyncio.Event | None = None,
+    progress: Progress | None = None,
 ) -> UpgradeReport:
     releases = [
         row[0]
@@ -270,7 +280,7 @@ async def upgrade_pass(
         checked += 1
         try:
             release = await deps.mb.release(mbid)
-            count, retry = await _upgrade_release(conn, cfg, deps, release, stop)
+            count, retry = await _upgrade_release(conn, cfg, deps, release, stop, progress)
         except (HttpError, MbDataError, OSError) as exc:
             log.warning("Cannot check upgrades for %s: %s", mbid, exc)
             count, retry = 0, queue.after(_RETRY)

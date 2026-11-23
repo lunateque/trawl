@@ -110,14 +110,19 @@ def unresolved_tracks(conn: sqlite3.Connection, origin: Origin) -> list[External
 
 
 def bind(
-    conn: sqlite3.Connection, unresolved_id: int, target: MbLink, artist_limit: int
+    conn: sqlite3.Connection,
+    unresolved_id: int,
+    target: MbLink,
+    artist_limit: int,
+    *,
+    expected: tuple[str, str] | None = None,
 ) -> int | None:
     with conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT origin,origin_ref FROM unresolved WHERE id=?", (unresolved_id,)
         ).fetchone()
-        if row is None:
+        if row is None or (expected is not None and tuple(row) != expected):
             return None
         origin, ref = row
         want = repo.insert_want(

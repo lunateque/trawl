@@ -24,7 +24,7 @@ class _JsonFormatter(logging.Formatter):
 
 
 @contextmanager
-def setup(data_dir: Path, verbose: bool) -> Generator[None]:
+def setup(data_dir: Path, verbose: bool, *, terminal: bool = True) -> Generator[None]:
     data_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("trawl")
     previous_level, previous_propagate = logger.level, logger.propagate
@@ -32,18 +32,20 @@ def setup(data_dir: Path, verbose: bool) -> Generator[None]:
         data_dir / "trawl.log", maxBytes=10 * 1024**2, backupCount=3, encoding="utf-8"
     )
     file.setFormatter(_JsonFormatter())
-    console = RichHandler(console=Console(stderr=True), show_path=False)
-    console.setLevel(logging.DEBUG if verbose else logging.INFO)
+    console = RichHandler(console=Console(stderr=True), show_path=False) if terminal else None
+    if console is not None:
+        console.setLevel(logging.DEBUG if verbose else logging.INFO)
+        logger.addHandler(console)
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
     logger.addHandler(file)
-    logger.addHandler(console)
     try:
         yield
     finally:
-        logger.removeHandler(console)
+        if console is not None:
+            logger.removeHandler(console)
+            console.close()
         logger.removeHandler(file)
         logger.setLevel(previous_level)
         logger.propagate = previous_propagate
         file.close()
-        console.close()

@@ -176,5 +176,27 @@ async def test_plan_to_library_reuse_and_rejection(
                 == "rejected_verify"
             )
             assert not list((cfg.library_root / "The Band" / "2001 - Mismatch").glob("*.flac"))
+            from trawl.db import queue, review
+
+            mismatch_id: int = conn.execute(
+                "SELECT id FROM tracks WHERE release_mbid='Mismatch'"
+            ).fetchone()[0]
+            choice = review.choices(conn, mismatch_id)[0]
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                assert queue.pin(conn, mismatch_id, choice.source, choice.ref)
+            expected_recordings.append("other")
+            await run_once(conn, cfg, Secrets("fixture"), deps, only=mismatch_id)
+            rejected = review.rejection(conn, mismatch_id, cfg.library_root)
+            assert rejected and "other" in rejected.comparison and rejected.path.is_file()
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                assert review.accept(conn, mismatch_id, rejected, cfg.library_root)
+            await run_once(conn, cfg, Secrets("fixture"), deps, only=mismatch_id)
+            row = conn.execute(
+                "SELECT state,verified_by,path FROM tracks WHERE id=?", (mismatch_id,)
+            ).fetchone()
+            assert tuple(row)[:2] == ("done", "manual")
+            assert FLAC(Path(row[2]))["album"] == ["Mismatch"]
     finally:
         await http.aclose()

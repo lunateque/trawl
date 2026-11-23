@@ -1,0 +1,65 @@
+Screen {
+    layout: vertical;
+}
+
+#status, #needs, #keys {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#status, #needs, .heading {
+    text-style: bold;
+}
+
+#status {
+    color: $accent;
+}
+
+#overview {
+    height: 14;
+    min-height: 10;
+}
+
+#counts {
+    width: 22;
+    padding: 0 1;
+    border: round $primary;
+}
+
+#activity {
+    width: 1fr;
+    border: round $primary;
+    padding: 0 1;
+}
+
+#sources, .heading {
+    height: auto;
+}
+
+#events, TabbedContent, TabPane, Grid {
+    height: 1fr;
+}
+
+ModalScreen {
+    align: center middle;
+    background: $background 65%;
+}
+
+.dialog {
+    width: 90%;
+    max-width: 110;
+    height: 70%;
+    padding: 1 2;
+    border: round $accent;
+    background: $panel;
+}
+
+.dialog .heading {
+    color: $accent;
+    margin-bottom: 1;
+}
+
+.dialog.paste {
+    height: auto;
+}
