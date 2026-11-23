@@ -11,7 +11,7 @@ import httpx
 import pytest
 from conftest import mbid
 
-from trawl.config import ConfigError, load_secrets
+from trawl.config import ConfigError, ProxyConfig, load_secrets
 from trawl.db.connect import open_db
 from trawl.doctor import _slskd  # pyright: ignore[reportPrivateUsage]
 from trawl.library.place import cleanup_staging, staging_dir, unlink_regular, write_atomic
@@ -375,11 +375,12 @@ async def test_doctor_explains_insecure_slskd(tmp_path: Path) -> None:
         'slskd_api_key = "private"\nslskd_url = "http://192.0.2.1:5030"\n',
         encoding="utf-8",
     )
-    blocked = await _slskd(config, tmp_path, offline=True)
+    proxy = ProxyConfig()
+    blocked = await _slskd(config, tmp_path, offline=True, proxy=proxy)
     assert blocked.status == "FAIL" and "HTTPS" in blocked.detail
     with secrets.open("a", encoding="utf-8") as stream:
         stream.write("slskd_allow_insecure = true\n")
-    allowed = await _slskd(config, tmp_path, offline=True)
+    allowed = await _slskd(config, tmp_path, offline=True, proxy=proxy)
     assert allowed.status == "WARNING" and "plaintext" in allowed.detail
     assert "private" not in allowed.detail
 

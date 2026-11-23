@@ -6,6 +6,7 @@ from statistics import median
 
 from trawl.mb.models import Release, Track
 from trawl.normalize import norm_artist, norm_title
+from trawl.plan.choose import medium_rank
 from trawl.sources.base import Candidate, CandidateItem
 from trawl.sources.score import coverage, match_items, release_tracks, score, within_duration
 
@@ -125,6 +126,15 @@ class FolderMatch:
     reliable: bool
 
 
+def _has_matching_discs(release: Release, mapping: dict[str, CandidateItem]) -> bool:
+    return all(
+        (item.disc or 1) == medium.position
+        for medium in release.media
+        for track in medium.tracks
+        if (item := mapping.get(track.mbid)) is not None
+    )
+
+
 def rank_folders(
     source: str,
     folders: Sequence[Folder],
@@ -136,13 +146,32 @@ def rank_folders(
 ) -> list[FolderMatch]:
     threshold = min_coverage if min_coverage is not None else float(album)
     matches: list[FolderMatch] = []
+    tracklists = (
+        {
+            release.mbid: tuple(norm_title(track.title) for track in release_tracks(release))
+            for release, _ in editions
+        }
+        if album
+        else {}
+    )
+    flat_preferred = {
+        tracklists[release.mbid]
+        for release, _ in editions
+        if album and len(release.media) == 1 and medium_rank(release) < 2
+    }
+    by_tracklist: dict[tuple[str, ...], tuple[tuple[bool, int], list[FolderMatch]]] = {}
     for folder in folders:
         if reject_cue_image(folder.files):
             continue
         files = pick_format_set(group_disc_subfolders(folder.files))
         if lossless_only:
             files = [file for file in files if file.is_lossless]
+        flat = album and all(file.item().disc in (None, 1) for file in files)
         for release, tracks in editions:
+            tracklist = tracklists.get(release.mbid)
+            # Flattened numbering can match a split edition without matching its disc layout.
+            if flat and len(release.media) > 1 and tracklist in flat_preferred:
+                continue
             matched = match_folder(release, tracks, files)
             single = len(files) == 1 and not album
             if single and source == "soulseek":
@@ -193,14 +222,23 @@ def rank_folders(
             )
             full = release_tracks(release)
             complete = not single and len(match_folder(release, full, files)) == len(full)
-            matches.append(
-                FolderMatch(
-                    release,
-                    replace(candidate, score=score(candidate, tracks, mapping)),
-                    mapping,
-                    complete,
-                )
+            match = FolderMatch(
+                release,
+                replace(candidate, score=score(candidate, tracks, mapping)),
+                mapping,
+                complete,
             )
+            if tracklist is None:
+                matches.append(match)
+                continue
+            rank = (not _has_matching_discs(release, mapping), medium_rank(release))
+            previous = by_tracklist.get(tracklist)
+            if previous is None or rank < previous[0]:
+                by_tracklist[tracklist] = (rank, [match])
+            elif rank == previous[0]:
+                previous[1].append(match)
+    for _, equivalent in by_tracklist.values():
+        matches.extend(equivalent)
     return sorted(
         matches,
         key=lambda match: (

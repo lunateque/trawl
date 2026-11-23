@@ -117,6 +117,19 @@ class Secrets:
 
 
 @dataclass(frozen=True)
+class ProxyConfig:
+    url: str = ""
+    hosts: tuple[str, ...] = ("archive.org", "*.archive.org", "coverartarchive.org")
+
+    def matches(self, host: str) -> bool:
+        host = host.rstrip(".").lower()
+        return any(
+            host.endswith(pattern[1:]) if pattern.startswith("*.") else host == pattern
+            for pattern in self.hosts
+        )
+
+
+@dataclass(frozen=True)
 class Config:
     library_root: Path
     data_dir: Path
@@ -134,6 +147,7 @@ class Config:
     taste: TasteConfig = TasteConfig()
     likes_scope: Literal["track", "album"] = "track"
     watch: WatchConfig = WatchConfig()
+    proxy: ProxyConfig = ProxyConfig()
 
 
 class ConfigError(Exception):
@@ -353,6 +367,46 @@ def _duration(values: dict[str, object], key: str, default: str) -> int:
     return int(count) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
 
 
+_DNS_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*")
+
+
+def _proxy(values: dict[str, object], text: str) -> ProxyConfig:
+    net = _table(values, "net")
+    _check_keys(net, {"proxy"}, text, ("net",))
+    proxy = _table(net, "proxy")
+    _check_keys(proxy, {"url", "hosts"}, text, ("net", "proxy"))
+    url = proxy.get("url", "")
+    if not isinstance(url, str):
+        raise ConfigError("net.proxy.url: expected a string")
+    url = url.strip()
+    if url:
+        try:
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+                or parsed.port == 0
+                or any(ch.isspace() for ch in url)
+            ):
+                raise ValueError
+        except ValueError:
+            raise ConfigError(
+                "net.proxy.url: expected an HTTP(S) proxy address without credentials"
+            ) from None
+    hosts = tuple(
+        host.rstrip(".").lower()
+        for host in _strings(proxy.get("hosts", ProxyConfig().hosts), "net.proxy.hosts")
+    )
+    if any(not _DNS_NAME.fullmatch(host.removeprefix("*.")) for host in hosts):
+        raise ConfigError("net.proxy.hosts: expected host names or *.domain patterns")
+    return ProxyConfig(url, hosts)
+
+
 def _parse(path: Path, text: str) -> Config:
     values: dict[str, object] = loads(text)
     sections = {
@@ -374,7 +428,9 @@ def _parse(path: Path, text: str) -> Config:
         },
     }
     _check_keys(
-        values, {"library_root", "data_dir", "contact_email", "sources", "taste", *sections}, text
+        values,
+        {"library_root", "data_dir", "contact_email", "net", "sources", "taste", *sections},
+        text,
     )
     for section, keys in sections.items():
         _check_keys(_table(values, section), keys, text, (section,))
@@ -434,6 +490,7 @@ def _parse(path: Path, text: str) -> Config:
             _duration(watch, "queue_every", "15m"),
             _duration(watch, "upgrade_every", "24h"),
         ),
+        proxy=_proxy(values, text),
     )
 
 

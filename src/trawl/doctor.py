@@ -8,6 +8,7 @@ from typing import Literal
 from trawl.config import (
     Config,
     ConfigError,
+    ProxyConfig,
     load,
     load_secrets,
     secrets_permissions_warning,
@@ -96,6 +97,7 @@ async def _musicbrainz(cfg: Config) -> Check:
         f"trawl/{__version__} ( {cfg.contact_email} )",
         {"musicbrainz.org": RateLimiter(1.0)},
         max_attempts=1,
+        proxy=cfg.proxy,
     )
     try:
         await http.get_json(
@@ -108,6 +110,18 @@ async def _musicbrainz(cfg: Config) -> Check:
     return Check("MusicBrainz", "OK", "reachable")
 
 
+async def _cover_art(proxy: ProxyConfig) -> Check:
+    name = "Cover Art Archive"
+    http = HttpClient("trawl doctor", {}, max_attempts=1, proxy=proxy)
+    try:
+        await http.get_bytes("https://coverartarchive.org/")
+    except HttpError as exc:
+        return Check(name, "FAIL", str(exc))
+    finally:
+        await http.aclose()
+    return Check(name, "OK", "reachable")
+
+
 def _existing_directory(name: str, path: Path) -> Check:
     return (
         Check(name, "OK", str(path))
@@ -116,7 +130,7 @@ def _existing_directory(name: str, path: Path) -> Check:
     )
 
 
-async def _slskd(config: Path, download: Path, offline: bool) -> Check:
+async def _slskd(config: Path, download: Path, offline: bool, proxy: ProxyConfig) -> Check:
     try:
         secrets = load_secrets(config)
     except ConfigError as exc:
@@ -129,7 +143,7 @@ async def _slskd(config: Path, download: Path, offline: bool) -> Check:
         return (
             Check("slskd", "WARNING", warning) if insecure else Check("slskd", "SKIPPED", "offline")
         )
-    http = HttpClient("trawl doctor", {}, max_attempts=1)
+    http = HttpClient("trawl doctor", {}, max_attempts=1, proxy=proxy)
     try:
         await SoulseekSource(
             http,
@@ -175,8 +189,15 @@ async def check(config: Path, offline: bool) -> list[Check]:
             checks.append(Check("Secrets permissions", "WARNING", warning))
     except OSError:
         pass  # Loading secrets above already reports an inaccessible file.
+    route = f"{cfg.proxy.url} ({', '.join(cfg.proxy.hosts)})"
+    checks.append(
+        Check("Network proxy", "OK", route if cfg.proxy.url and cfg.proxy.hosts else "direct")
+    )
     checks.append(
         Check("MusicBrainz", "SKIPPED", "offline") if offline else await _musicbrainz(cfg)
+    )
+    checks.append(
+        Check("Cover Art Archive", "SKIPPED", "offline") if offline else await _cover_art(cfg.proxy)
     )
     try:
         secrets = read_secrets(cfg)
@@ -201,5 +222,5 @@ async def check(config: Path, offline: bool) -> list[Check]:
         and (download := cfg.sources.soulseek.download_dir) is not None
     ):
         checks.append(_existing_directory("slskd download directory", download))
-        checks.append(await _slskd(config, download, offline))
+        checks.append(await _slskd(config, download, offline, cfg.proxy))
     return checks

@@ -230,6 +230,151 @@ async def test_ytmusic_api_replay(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any(candidate.kind == "track" and candidate.official for candidate in track_candidates)
 
 
+@pytest.mark.parametrize(
+    ("title", "length", "result_title", "duration", "channel", "kind"),
+    [
+        (
+            "The Modern Age",
+            193_426,
+            "The Modern Age (Rough Trade Version)",
+            193,
+            "The Strokes",
+            "songs",
+        ),
+        (
+            "Last Nite",
+            199_933,
+            "Last Nite (Rough Trade Version - The Modern Age B-Side)",
+            199,
+            "The Strokes",
+            "songs",
+        ),
+        (
+            "Barely Legal",
+            277_080,
+            "Barely Legal (The Modern Age EP) - The Strokes",
+            278,
+            "samuraiinCfede",
+            "videos",
+        ),
+        ("Last Nite", 194_000, "Last Nite (Official Audio)", 194, "The Strokes - Topic", "songs"),
+        (
+            "Last Nite (2022 Remaster)",
+            194_000,
+            "Last Nite (Remastered)",
+            194,
+            "The Strokes",
+            "songs",
+        ),
+        ("Last Nite (feat. Guest)", 194_000, "Last Nite", 194, "The Strokes", "songs"),
+        ("Last Nite", 194_000, "The Strokes - Last Nite (Official Video)", 194, "upload", "videos"),
+        (
+            "Last Nite (Acoustic)",
+            194_000,
+            "Last Nite (Acoustic) (Official Audio)",
+            194,
+            "The Strokes",
+            "songs",
+        ),
+    ],
+)
+async def test_ytmusic_rankings_for_single_recordings(
+    monkeypatch: pytest.MonkeyPatch,
+    title: str,
+    length: int,
+    result_title: str,
+    duration: int,
+    channel: str,
+    kind: str,
+) -> None:
+    def entry(ref: str, title: str, duration: int, channel: str) -> dict[str, object]:
+        return {
+            "title": title,
+            "videoId": ref,
+            "artists": [{"name": channel}],
+            "duration_seconds": duration,
+        }
+
+    track = replace(_TRACK, title=title, length_ms=length)
+    release = replace(_release((track,)), title="The Modern Age")
+    base = title.split(" (", 1)[0]
+
+    def search(_: YTMusic, query: str, *, filter: str) -> list[dict[str, object]]:
+        if filter == "albums":
+            return []
+        if filter == "songs" and "B-Side" in result_title and not query.endswith(release.title):
+            return [entry("album-version", "Last Nite", 194, "The Strokes")]
+        if filter == "videos":
+            assert "The Modern Age" in query
+            if kind == filter:
+                return [
+                    entry("upload", f"{base} (Official Video)", duration, "unrelated uploader"),
+                    entry("yes", result_title, duration, channel),
+                ]
+            return []
+        return [
+            entry("wrong-length", base, duration + 12, "The Strokes"),
+            entry("guest-live", f"{base} feat. Guest - Live", duration, "The Strokes"),
+            entry("karaoke", f"{base} (Karaoke)", duration, "The Strokes")
+            if "feat. Guest" in title
+            else entry("remix", f"{base} (Dance Remix)", duration, "The Strokes"),
+            entry("cover", f"{base} (Cover)", duration, "The Strokes"),
+            entry("yes", result_title, duration, channel)
+            if kind == filter
+            else entry("sped-up", f"{base} (Sped Up)", duration, "The Strokes"),
+        ]
+
+    monkeypatch.setattr(YTMusic, "search", search)
+    found = await YTMusicSource(YTMusic(), None, None).search(release, [track])
+    assert [candidate.ref for candidate in found] == ["yes"]
+    assert match_items([track], found[0].items) == {track.mbid: found[0].items[0]}
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "Live",
+        "Remix",
+        "Cover",
+        "Karaoke",
+        "Instrumental",
+        "Sped Up",
+        "Slowed",
+        "Nightcore",
+        "8D",
+        "Acoustic",
+        "Official Live Audio",
+    ],
+)
+async def test_ytmusic_keeps_unknown_suffix_below_exact_and_excludes_other_versions(
+    monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    track = replace(_TRACK, title="Live Forever", length_ms=200_000)
+
+    def search(_: YTMusic, _query: str, *, filter: str) -> list[dict[str, object]]:
+        if filter != "songs":
+            return []
+        return [
+            {
+                "title": title,
+                "videoId": ref,
+                "artists": [{"name": credit.name} for credit in track.credits],
+                "duration_seconds": duration,
+            }
+            for ref, title, duration in [
+                ("unrelated", "Other Song (Archive Cut)", 200),
+                ("unknown", f"{track.title} (Archive Cut)", 200),
+                ("different", f"{track.title} ({version})", 200),
+                ("exact", track.title, 202),
+            ]
+        ]
+
+    monkeypatch.setattr(YTMusic, "search", search)
+    found = await YTMusicSource(YTMusic(), None, None).search(_release((track,)), [track])
+    assert [candidate.ref for candidate in found] == ["exact", "unknown"]
+    assert match_items([track], found[1].items) == {track.mbid: found[1].items[0]}
+
+
 @pytest.mark.tools
 async def test_partial_download_preserves_success_before_wall(
     tmp_path: Path,

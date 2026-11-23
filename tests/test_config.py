@@ -39,6 +39,18 @@ def test_load_full(tmp_path: Path) -> None:
     assert cfg.plan == PlanConfig(("album",), ("DE",), "deluxe", 2)
 
 
+def test_load_network_proxy(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        MINIMAL + '[net.proxy]\nurl = "http://proxy.example:8888"\n'
+        'hosts = ["Archive.ORG", "*.archive.org", "coverartarchive.org"]\n',
+        encoding="utf-8",
+    )
+    proxy = load(path).proxy
+    assert proxy.url == "http://proxy.example:8888"
+    assert proxy.hosts == ("archive.org", "*.archive.org", "coverartarchive.org")
+
+
 @pytest.mark.parametrize(
     ("text", "error"),
     [
@@ -54,6 +66,10 @@ def test_load_full(tmp_path: Path) -> None:
         (MINIMAL + "[plan]\ndiscography_limit = 0", r"plan\.discography_limit"),
         (MINIMAL + "[mb]\ncache_days = -1", r"mb\.cache_days"),
         (MINIMAL + "[mb]\ncache_days = true", r"mb\.cache_days.*integer"),
+        (MINIMAL + '[net.proxy]\nurl = "file:///tmp/proxy"', r"net\.proxy\.url"),
+        (MINIMAL + '[net.proxy]\nurl = "http://user:pwd@proxy.test"', r"net\.proxy\.url"),
+        (MINIMAL + '[net.proxy]\nhosts = ["*archive.org"]', r"net\.proxy\.hosts"),
+        (MINIMAL + '[net.proxy]\nunknown = "a"', r"net\.proxy\.unknown"),
         (MINIMAL + "plan = []", "plan.*table"),
     ],
 )

@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from trawl.config import ProxyConfig
 from trawl.net.limiter import RateLimiter
 
 _JSON_LIMIT = 10_000_000
@@ -109,6 +110,9 @@ async def _read(response: httpx.Response, limit: int, service: str) -> bytes:
     return content
 
 
+_DIRECT = ProxyConfig()
+
+
 class HttpClient:
     def __init__(
         self,
@@ -118,6 +122,9 @@ class HttpClient:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         rand: Callable[[], float] = random.random,
         max_attempts: int = 5,
+        *,
+        proxy: ProxyConfig = _DIRECT,
+        proxy_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
@@ -125,10 +132,23 @@ class HttpClient:
         self._sleep = sleep
         self._rand = rand
         self._max_attempts = max_attempts
-        self._client = httpx.AsyncClient(
+        self._proxy = proxy
+        self._client = self._open(user_agent, transport)
+        self._proxied = (
+            self._open(user_agent, proxy_transport, None if proxy_transport else proxy.url)
+            if proxy.url and proxy.hosts
+            else None
+        )
+
+    def _open(
+        self, user_agent: str, transport: httpx.AsyncBaseTransport | None, proxy: str | None = None
+    ) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
             headers={"User-Agent": user_agent, "Accept-Encoding": "gzip, identity"},
             timeout=30,
             transport=transport,
+            proxy=proxy,
+            trust_env=False,
             event_hooks={"request": [self._limit]},
         )
 
@@ -216,7 +236,12 @@ class HttpClient:
             try:
                 for hops in range(self._client.max_redirects + 1):
                     code = None
-                    response = await self._client.send(request, stream=True, follow_redirects=False)
+                    client = (
+                        self._proxied
+                        if self._proxied is not None and self._proxy.matches(request.url.host)
+                        else self._client
+                    )
+                    response = await client.send(request, stream=True, follow_redirects=False)
                     code = response.status_code
                     try:
                         if follow_redirects and response.next_request is not None:
@@ -256,3 +281,5 @@ class HttpClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+        if self._proxied is not None:
+            await self._proxied.aclose()

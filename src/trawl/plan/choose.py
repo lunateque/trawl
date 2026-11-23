@@ -39,6 +39,11 @@ def choose_recording_group(releases: Sequence[ReleaseRef]) -> ReleaseGroupRef | 
     return choose_release_group(list(groups.values()), official.__contains__)
 
 
+def medium_rank(release: Release) -> int:
+    format_name = release.media[0].format if release.media else None
+    return 0 if format_name == "Digital Media" else 1 if format_name == "CD" else 2
+
+
 def choose_release(
     releases: Sequence[Release],
     cfg: PlanConfig,
@@ -46,15 +51,13 @@ def choose_release(
     countries = tuple(dict.fromkeys(("XW", *cfg.countries)))
 
     def key(release: Release) -> tuple[bool, int, int, int, bool, str, str]:
-        format_name = release.media[0].format if release.media else None
-        format_rank = 0 if format_name == "Digital Media" else 1 if format_name == "CD" else 2
         country = (
             countries.index(release.country) if release.country in countries else len(countries)
         )
         tracks = release.track_count if cfg.prefer == "original" else -release.track_count
         return (
             release.status != "Official",
-            format_rank,
+            medium_rank(release),
             country,
             tracks,
             (release.date is None),

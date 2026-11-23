@@ -97,7 +97,7 @@ def _config(root: Path, sources: str) -> Path:
 def _install_transport(
     monkeypatch: pytest.MonkeyPatch, handle: Callable[[httpx.Request], httpx.Response]
 ) -> None:
-    def factory(agent: str, _: object) -> HttpClient:
+    def factory(agent: str, _: object, *, proxy: object) -> HttpClient:
         return HttpClient(agent, {}, transport=httpx.MockTransport(handle), max_attempts=1)
 
     monkeypatch.setattr(cli, "HttpClient", factory)

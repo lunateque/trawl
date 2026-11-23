@@ -31,6 +31,7 @@ class Candidate:
     score: float = 0
     free_slot: bool = False
     upload_speed: int = 0
+    title_penalty: bool = False
 
 
 @dataclass(frozen=True)

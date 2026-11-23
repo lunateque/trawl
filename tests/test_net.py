@@ -6,6 +6,7 @@ from time import time
 import httpx
 import pytest
 
+from trawl.config import ProxyConfig
 from trawl.net.client import HttpClient, HttpError
 from trawl.net.limiter import RateLimiter
 
@@ -87,3 +88,50 @@ async def test_limiter_spaces_concurrent_calls_and_redirects() -> None:
     finally:
         await http.aclose()
     assert starts == [("musicbrainz.org", 0), ("other.org", 0), ("musicbrainz.org", 1)]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_proxy_routes_each_redirect_hop(enabled: bool) -> None:
+    seen: list[tuple[str, str]] = []
+    hops = {
+        "coverartarchive.org": "https://archive.org/redirect",
+        "archive.org": "https://ia800100.archive.org/redirect",
+        "ia800100.archive.org": "https://notarchive.org/redirect",
+        "notarchive.org": "https://archive.org.evil.test/redirect",
+        "archive.org.evil.test": "https://other.test/result",
+    }
+
+    def transport(route: str) -> httpx.MockTransport:
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append((route, request.url.host))
+            if request.url.path == "/insecure":
+                return httpx.Response(307, headers={"Location": "http://archive.org/result"})
+            if target := hops.get(request.url.host):
+                return httpx.Response(307, headers={"Location": target})
+            return httpx.Response(200, content=b"image")
+
+        return httpx.MockTransport(handle)
+
+    proxy = ProxyConfig(
+        "http://proxy.test:8888" if enabled else "",
+        ("coverartarchive.org", "archive.org", "*.archive.org"),
+    )
+    http = HttpClient(
+        "test", {}, transport("direct"), proxy=proxy, proxy_transport=transport("proxy")
+    )
+    try:
+        assert await http.get_bytes("https://coverartarchive.org/redirect") == b"image"
+        with pytest.raises(HttpError, match="redirect requires HTTPS"):
+            await http.get_bytes("https://coverartarchive.org/insecure")
+    finally:
+        await http.aclose()
+    routed = "proxy" if enabled else "direct"
+    assert seen == [
+        (routed, "coverartarchive.org"),
+        (routed, "archive.org"),
+        (routed, "ia800100.archive.org"),
+        ("direct", "notarchive.org"),
+        ("direct", "archive.org.evil.test"),
+        ("direct", "other.test"),
+        (routed, "coverartarchive.org"),
+    ]

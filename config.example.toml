@@ -9,6 +9,11 @@ contact_email = "you@example.com"
 # Set to 0 to bypass cache reads.
 cache_days = 30
 
+[net.proxy]
+# Empty URL uses a direct connection. Wildcards match subdomains, not the apex.
+url = ""
+hosts = ["archive.org", "*.archive.org", "coverartarchive.org"]
+
 [plan]
 # Allowed primary release group types when expanding an artist.
 types = ["album", "ep", "single"]

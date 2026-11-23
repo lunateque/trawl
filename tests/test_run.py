@@ -21,11 +21,16 @@ from trawl.plan.wants import create_want
 
 
 @pytest.mark.tools
+@pytest.mark.parametrize(
+    ("single_fallback", "confirmed"), [(False, True), (True, True), (True, False)]
+)
 async def test_plan_to_library_reuse_and_rejection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     audio_file: Path,
     jpeg: bytes,
+    single_fallback: bool,
+    confirmed: bool,
 ) -> None:
     from trawl.runner.run import RunDeps, run_once
     from trawl.sources.ytmusic import YTMusicSource
@@ -52,17 +57,38 @@ async def test_plan_to_library_reuse_and_rejection(
         ("rock",),
     )
     copies = 0
-    expected_recordings = [track.recording_mbid for track in tracks]
+    expected_recordings: list[str | None] = [track.recording_mbid for track in tracks]
+    if not confirmed:
+        expected_recordings[-1] = None
+        expected_recordings.append(None)
+    downloaded: list[str] = []
 
     class Downloader:
         def download(self, video_id: str, into: Path) -> Path:
             nonlocal copies
             copies += 1
+            downloaded.append(video_id)
             return Path(shutil.copyfile(audio_file, into / f"{video_id}.flac"))
 
     def search(_: YTMusic, query: str, filter: str) -> list[dict[str, object]]:
-        assert filter == "albums"
-        return [{"browseId": query}]
+        if filter == "albums":
+            return [] if single_fallback and query.endswith(" Album") else [{"browseId": query}]
+        track = next(track for track in tracks if query.endswith(track.title))
+        assert filter == "songs"
+        return [
+            {
+                "title": f"{track.title} (Archive Cut)",
+                "videoId": f"unknown-{track.position}",
+                "artists": [{"name": credit.name}],
+                "duration_seconds": 31,
+            },
+            {
+                "title": f"{track.title} (Official Audio)",
+                "videoId": f"song-{track.position}",
+                "artists": [{"name": credit.name}],
+                "duration_seconds": 32,
+            },
+        ]
 
     def get_album(_: YTMusic, browse_id: str) -> dict[str, object]:
         members = tracks if browse_id.endswith("Album") else (tracks[0],)
@@ -84,6 +110,8 @@ async def test_plan_to_library_reuse_and_rejection(
             assert request.method == "POST"
             assert b"meta=recordingids" in request.content
             recording = expected_recordings.pop(0)
+            if recording is None:
+                return httpx.Response(200, json={"status": "ok", "results": []})
             return httpx.Response(
                 200,
                 json={
@@ -136,7 +164,24 @@ async def test_plan_to_library_reuse_and_rejection(
 
             await plan(release)
             await run_once(conn, cfg, Secrets("fixture"), deps)
+            if single_fallback:
+                assert downloaded == (
+                    ["song-1", "song-2", "song-3"]
+                    if confirmed
+                    else ["song-1", "song-2", "song-3", "unknown-3"]
+                )
             folder = cfg.library_root / "The Band" / "2001 - Album"
+            if not confirmed:
+                assert repo.status(conn).tracks == [("done", 2), ("missing", 1)]
+                assert not (folder / "03 - Song 3.flac").exists()
+                reasons = conn.execute(
+                    "SELECT reason FROM attempts WHERE outcome = 'rejected_verify'"
+                )
+                assert [row[0] for row in reasons] == [
+                    "duration alone requires a reliable album candidate",
+                    "duration alone requires a reliable album candidate",
+                ]
+                return
             for i in range(1, 4):
                 file = folder / f"{i:02} - Song {i}.flac"
                 tags = FLAC(file)
@@ -150,6 +195,8 @@ async def test_plan_to_library_reuse_and_rejection(
             assert [row[0] for row in conn.execute("SELECT outcome FROM attempts")] == [
                 "accepted"
             ] * 3
+            verified = conn.execute("SELECT DISTINCT verified_by FROM tracks")
+            assert [row[0] for row in verified] == ["acoustid"]
 
             def edition(title: str, recording: str) -> Release:
                 track = replace(tracks[0], mbid=f"{title}-track", recording_mbid=recording)

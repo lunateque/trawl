@@ -15,10 +15,12 @@ from trawl.runner.check import check_folder
 from trawl.runner.tools import AudioTools
 from trawl.sources.base import Fetched
 from trawl.sources.folder import (
+    Folder,
     FolderFile,
     group_disc_subfolders,
     match_folder,
     pick_format_set,
+    rank_folders,
     reject_cue_image,
 )
 from trawl.sources.local import LocalSource
@@ -80,6 +82,71 @@ def test_disc_groups_prefer_lossless_and_ignore_extras() -> None:
         "track-2": "Disc 2/01 second song.flac",
     }
     assert reject_cue_image([member("album.wav"), member("album.cue")]) == "cue image not supported"
+
+
+@pytest.mark.parametrize(
+    ("formats", "split", "selected"),
+    [
+        (("Digital Media", "CD", '12" Vinyl'), False, "Digital Media"),
+        (("CD", '12" Vinyl'), False, "CD"),
+        (("Digital Media", "CD", '12" Vinyl'), True, '12" Vinyl'),
+    ],
+)
+def test_album_folder_prefers_compatible_layout_then_medium(
+    formats: tuple[str, ...], split: bool, selected: str
+) -> None:
+    base = album()
+    original = tuple(
+        replace(
+            base.media[0].tracks[0],
+            mbid=f"track-{n}",
+            recording_mbid=mbid(f"recording-{n}"),
+            position=n,
+            number=str(n),
+            title=f"Song {n}",
+        )
+        for n in range(1, 13)
+    )
+    editions: list[tuple[Release, list[Track]]] = []
+    for name in reversed(formats):
+        media = (replace(base.media[0], format=name, tracks=original),)
+        if name == '12" Vinyl':
+            media = (
+                replace(media[0], tracks=original[:6]),
+                replace(
+                    base.media[1],
+                    format=name,
+                    tracks=tuple(
+                        replace(track, position=i, number=str(i))
+                        for i, track in enumerate(original[6:], 1)
+                    ),
+                ),
+            )
+        else:
+            offset = 400 if name == "Digital Media" else 200
+            media = (
+                replace(
+                    media[0], tracks=tuple(replace(t, length_ms=4000 + offset) for t in original)
+                ),
+            )
+        editions.append(
+            (
+                replace(base, mbid=mbid(name), media=media),
+                [track for medium in media for track in medium.tracks],
+            )
+        )
+    files = tuple(
+        member(
+            f"CD{1 + (i - 1) // 6}/{1 + (i - 1) % 6:02d} Song {i}.flac"
+            if split
+            else f"{i:02d} Song {i}.flac"
+        )
+        for i in range(1, 13)
+    )
+    matches = rank_folders("soulseek", [Folder("rip", base.title, files)], editions, album=True)
+    assert [(match.release.media[0].format, len(match.mapping)) for match in matches] == [
+        (selected, 12)
+    ]
 
 
 def tone(path: Path, codec: str, freq: int = 440) -> None:

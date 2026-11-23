@@ -1,5 +1,6 @@
 import asyncio
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol, cast
 from urllib.parse import parse_qs, urlsplit
@@ -39,6 +40,19 @@ _VIDEO = re.compile(r"[A-Za-z0-9_-]{11}")
 _STATUS = re.compile(r"\b(?:HTTP(?: Error| status(?: code)?)?[: ]+(\d{3})|(\d{3}) Client Error)\b")
 _SEARCH_URL = "https://music.youtube.com/youtubei/v1/search"
 _VIDEO_URL = "https://www.youtube.com/watch"
+_DASH = re.compile(r"\s+[-\u2013\u2014]\s+")
+_BRACKET = re.compile(r"\s+(?:\(([^()]*)\)|\[([^\[\]]*)\])$")
+_FEATURE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.+$", re.I)
+_PRESENTATION = re.compile(
+    r"(?:official )?(?:audio|(?:music |lyrics? )?video)"
+    r"|(?:\d{4} )?remaster(?:ed)?(?: \d{4})?(?: version)?",
+    re.I,
+)
+_FEATURE_WORDS = ("feat ", "ft ", "featuring ")
+_DIFFERENT_VERSION = re.compile(
+    r"\b(?:live|remix(?:ed)?|cover|karaoke|instrumental|sped[\s-]+up|slowed|nightcore|8d|acoustic)\b",
+    re.I,
+)
 
 
 def is_wall(exc: Exception) -> bool:
@@ -140,7 +154,7 @@ class YtDlpDownloader:
 
 def _artist_names(data: JsonObject) -> set[str]:
     return {
-        norm_artist(name)
+        norm_artist(name.casefold().removesuffix(" - topic"))
         for raw in array_value(data.get("artists"))
         if isinstance(name := object_value(raw).get("name"), str)
     }
@@ -166,6 +180,84 @@ def _candidate(
     return Candidate(
         "ytmusic", ref, "album" if album else "track", title, None, None, False, official, items
     )
+
+
+def _qualifier(text: str, album: str) -> bool:
+    label = norm_title(text)
+    return (
+        label in {"rough trade version", f"{album} ep", f"{album} bside"}
+        or label.startswith(_FEATURE_WORDS)
+        or _PRESENTATION.fullmatch(text) is not None
+    )
+
+
+def _single_title(title: str, album: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    unknown: list[str] = []
+    versions: list[str] = []
+    title = title.strip()
+    while title:
+        if bracket := _BRACKET.search(title):
+            suffix = _DASH.split(bracket[1] or bracket[2] or "")
+            title = title[: bracket.start()]
+        elif len(parts := _DASH.split(title)) > 1:
+            suffix = parts[-1:]
+            title = title[: len(title) - len(parts[-1])].rstrip(" -\u2013\u2014")
+        else:
+            if (feature := _FEATURE.search(title)) and not any(ch in feature[0] for ch in "()[]"):
+                title = title[: feature.start()]
+            break
+        for part in reversed(suffix):
+            if _DIFFERENT_VERSION.search(part):
+                versions.append(norm_title(part))
+            elif not _qualifier(part, album):
+                unknown.append(norm_title(part))
+    return norm_title(title), tuple(reversed(versions)), tuple(reversed(unknown))
+
+
+def _credited_title(title: str, names: set[str]) -> str | None:
+    parts = _DASH.split(title)
+    if len(parts) > 1:
+        if norm_artist(parts[0]) in names:
+            return " - ".join(parts[1:])
+        if norm_artist(parts[-1]) in names:
+            return " - ".join(parts[:-1])
+    return None
+
+
+def _singles(
+    entries: list[object], track: Track, names: set[str], album: str, *, video: bool
+) -> list[Candidate]:
+    expected, planned_versions, planned_unknown = _single_title(track.title, album)
+    matches: list[Candidate] = []
+    for raw in entries:
+        data = object_value(raw)
+        item = _item(data)
+        if item is None or not within_duration(track.length_ms, item.length_ms):
+            continue
+        title = item.title
+        if video:
+            if track.length_ms is None or (credited := _credited_title(title, names)) is None:
+                continue
+            title = credited
+        elif not names & _artist_names(data):
+            continue
+        penalty = False
+        if norm_title(title) != norm_title(track.title):
+            base, versions, unknown = _single_title(title, album)
+            if (
+                not expected
+                or base != expected
+                or versions != planned_versions
+                or unknown[: len(planned_unknown)] != planned_unknown
+            ):
+                continue
+            penalty = unknown != planned_unknown
+        if norm_title(item.title) != norm_title(track.title):
+            item = replace(item, aliases=(track.title,))
+        official = not video and data.get("resultType") == "song" and bool(data.get("album"))
+        candidate = _candidate(item.ref, item.title, (item,), album=False, official=official)
+        matches.append(replace(candidate, title_penalty=penalty))
+    return matches
 
 
 class YTMusicSource:
@@ -220,27 +312,31 @@ class YTMusicSource:
                     )
                 )
         if not candidates or len(tracks) < len(all_tracks):
+            album_title = norm_title(release.title)
             for track in tracks:
                 credits = track.credits or release.credits
                 names = {norm_artist(credit.name) for credit in credits}
-                songs = cast(
-                    "list[object]",
-                    self._ytm.search(f"{credit_string(credits)} {track.title}", filter="songs"),  # pyright: ignore[reportUnknownMemberType]
-                )[:5]
-                for raw in songs:
-                    song = object_value(raw)
-                    item = _item(song)
-                    if not (
-                        item
-                        and names & _artist_names(song)
-                        and norm_title(item.title) == norm_title(track.title)
-                        and within_duration(track.length_ms, item.length_ms)
-                    ):
-                        continue
-                    official = song.get("resultType") == "song" and bool(song.get("album"))
-                    candidates.append(
-                        _candidate(item.ref, item.title, (item,), album=False, official=official)
-                    )
+                query = f"{credit_string(credits)} {track.title}"
+                songs = cast("list[object]", self._ytm.search(query, filter="songs"))[:5]  # pyright: ignore[reportUnknownMemberType]
+                matches = _singles(songs, track, names, album_title, video=False)
+                context = (
+                    f"{query} {release.title}" if norm_title(track.title) != album_title else query
+                )
+                if all(match.title_penalty for match in matches) and context != query:
+                    songs = cast("list[object]", self._ytm.search(context, filter="songs"))[:5]  # pyright: ignore[reportUnknownMemberType]
+                    matches.extend(_singles(songs, track, names, album_title, video=False))
+                if all(match.title_penalty for match in matches):
+                    videos = cast(
+                        "list[object]",
+                        self._ytm.search(context, filter="videos"),  # pyright: ignore[reportUnknownMemberType]
+                    )[:5]
+                    matches.extend(_singles(videos, track, names, album_title, video=True))
+                matches.sort(key=lambda candidate: candidate.title_penalty)
+                seen: set[str] = set()
+                for candidate in matches:
+                    if candidate.ref not in seen:
+                        seen.add(candidate.ref)
+                        candidates.append(candidate)
         return candidates
 
     async def fetch(self, candidate: Candidate, into: Path) -> list[Fetched]:

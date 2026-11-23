@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from trawl import cli
-from trawl.config import Config
+from trawl.config import Config, ProxyConfig
 from trawl.db.connect import open_db
 from trawl.mb.client import MusicBrainzClient
 from trawl.net.client import HttpClient
@@ -144,6 +144,48 @@ def test_doctor_offline(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         for text in ("FAIL", "ffmpeg", "fpcalc", "rsgain", "offline", "AcoustID")
     )
     assert (config.parent / "library" / ".trawl-staging").is_dir()
+
+
+@pytest.mark.parametrize("offline", [True, False])
+def test_doctor_reports_proxy_and_probes_caa(
+    config: Path, monkeypatch: pytest.MonkeyPatch, offline: bool
+) -> None:
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write(
+            '\n[net.proxy]\nurl = "http://proxy.test:8888"\nhosts = ["coverartarchive.org"]\n'
+        )
+    seen: list[tuple[str, str]] = []
+
+    def transport(route: str) -> httpx.MockTransport:
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append((route, str(request.url.copy_with(query=None))))
+            return httpx.Response(200, json={})
+
+        return httpx.MockTransport(handle)
+
+    def factory(agent: str, _: object, *, max_attempts: int, proxy: ProxyConfig) -> HttpClient:
+        return HttpClient(
+            agent,
+            {},
+            transport("direct"),
+            max_attempts=max_attempts,
+            proxy=proxy,
+            proxy_transport=transport("proxy"),
+        )
+
+    monkeypatch.setattr("trawl.doctor.HttpClient", factory)
+    args = ["--config", str(config), "doctor"] + (["--offline"] if offline else [])
+    result = CliRunner().invoke(cli.app, args, env={"COLUMNS": "160"})
+    assert "http://proxy.test:8888" in result.output
+    assert "Cover Art Archive" in result.output
+    assert seen == (
+        []
+        if offline
+        else [
+            ("direct", "https://musicbrainz.org/ws/2/artist"),
+            ("proxy", "https://coverartarchive.org/"),
+        ]
+    )
 
 
 def test_bad_config_exits_with_dotted_key(config: Path) -> None:

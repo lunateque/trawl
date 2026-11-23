@@ -33,7 +33,7 @@ def read_secrets(cfg: Config) -> Secrets:
 
 @asynccontextmanager
 async def taste_http(cfg: Config) -> AsyncGenerator[HttpClient]:
-    http = HttpClient(f"trawl/{__version__} ( {cfg.contact_email} )", {})
+    http = HttpClient(f"trawl/{__version__} ( {cfg.contact_email} )", {}, proxy=cfg.proxy)
     try:
         yield http
     finally:

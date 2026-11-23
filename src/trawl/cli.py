@@ -96,7 +96,9 @@ def _session(
 @asynccontextmanager
 async def make_mb(cfg: Config, conn: sqlite3.Connection) -> AsyncGenerator[MusicBrainzClient]:
     http = HttpClient(
-        f"trawl/{__version__} ( {cfg.contact_email} )", {"musicbrainz.org": RateLimiter(1.0)}
+        f"trawl/{__version__} ( {cfg.contact_email} )",
+        {"musicbrainz.org": RateLimiter(1.0)},
+        proxy=cfg.proxy,
     )
     try:
         yield MusicBrainzClient(http, conn, cfg.mb.cache_days)
@@ -286,6 +288,7 @@ async def _run_deps(
                 ("coverartarchive.org", 0.2),
             )
         },
+        proxy=cfg.proxy,
     )
     try:
         sources: list[Source] = []

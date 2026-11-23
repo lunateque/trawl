@@ -306,7 +306,8 @@ class _Runner:
             mapping = match_items(
                 basis, candidate.items, release if candidate.kind == "album" else None
             )
-            if not mapping or coverage(basis, mapping) < threshold:
+            single_fallback = album and source.name == "ytmusic" and candidate.kind == "track"
+            if not mapping or (not single_fallback and coverage(basis, mapping) < threshold):
                 continue
             reliable = (
                 candidate.kind == "album"
@@ -317,7 +318,7 @@ class _Runner:
             ranked.append(
                 (replace(candidate, score=score(candidate, basis, mapping)), mapping, reliable)
             )
-        return sorted(ranked, key=lambda entry: -entry[0].score)
+        return sorted(ranked, key=lambda entry: (entry[0].title_penalty, -entry[0].score))
 
     async def search(
         self,
