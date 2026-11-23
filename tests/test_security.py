@@ -327,7 +327,7 @@ async def test_acoustid_rejects_non_uuid_recording() -> None:
 
 async def test_deep_json_fails_as_http_error() -> None:
     def handle(_: httpx.Request) -> httpx.Response:
-        depth = 8192
+        depth = 200_000  # beyond any interpreter recursion limit on every platform
         return httpx.Response(200, content=b"[" * depth + b"]" * depth)
 
     http = HttpClient("test", {}, httpx.MockTransport(handle))
