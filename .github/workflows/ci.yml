@@ -1,0 +1,46 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  gate:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - name: Install Linux audio tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libchromaprint-tools rsgain
+      - name: Install Windows audio tools
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y
+          if ($LASTEXITCODE -ne 0) { throw "ffmpeg installation failed" }
+          $tools = Join-Path $env:RUNNER_TEMP 'audio-tools'
+          New-Item -ItemType Directory $tools | Out-Null
+          gh release download --repo acoustid/chromaprint --pattern '*windows*x86_64*.zip' --dir $tools
+          if ($LASTEXITCODE -ne 0) { throw "fpcalc download failed" }
+          gh release download --repo complexlogic/rsgain --pattern '*win*64*.zip' --dir $tools
+          if ($LASTEXITCODE -ne 0) { throw "rsgain download failed" }
+          Get-ChildItem $tools -Filter '*.zip' | ForEach-Object {
+            Expand-Archive $_.FullName (Join-Path $tools $_.BaseName)
+          }
+          foreach ($name in @('fpcalc.exe', 'rsgain.exe')) {
+            $binary = Get-ChildItem $tools -Recurse -Filter $name | Select-Object -First 1
+            if (-not $binary) { throw "$name not found in release archive" }
+            $binary.DirectoryName >> $env:GITHUB_PATH
+          }
+      - run: uv python install 3.12
+      - run: uv sync --locked --python 3.12
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pyright
+      - run: uv run pytest -q

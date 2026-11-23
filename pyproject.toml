@@ -1,0 +1,39 @@
+[project]
+name = "trawl"
+version = "0.1.0"
+description = "Plan and build a local music library"
+requires-python = ">=3.12"
+dependencies = ["httpx", "typer", "rich", "platformdirs"]
+
+[project.scripts]
+trawl = "trawl.cli:app"
+
+[dependency-groups]
+dev = ["ruff", "pyright", "pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "PTH", "S", "T20", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.format]
+exclude = ["docs/**"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

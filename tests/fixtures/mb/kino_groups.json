@@ -1,0 +1,1002 @@
+{
+  "release-group-count": 75,
+  "release-group-offset": 0,
+  "release-groups": [
+    {
+      "disambiguation": "",
+      "first-release-date": "2008",
+      "id": "03deea60-202d-4c87-b6e2-99d49ecff4b6",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Полное собрание сочинений, mp3 коллекция в XI томах"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1984-05-20",
+      "id": "059edf98-dd1e-4b32-a6f2-04b6b81fbf8e",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт на II фестивале Ленинградского рок-клуба (20 мая 1984г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2003",
+      "id": "07e2c48e-2b2f-42ea-9617-b22b9f687add",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Live. 1988-1990"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2002",
+      "id": "0b4be534-14e1-4380-bf96-02701e1b43c2",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Первые записи. «Гарин и гиперболоиды»"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-08-05",
+      "id": "0d2fec2a-881b-456f-8729-ac41f06ae107",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в Киеве в Доме учёных (\"Счётчик Гейгера\") (лето 1986г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1996",
+      "id": "0ec8fe43-bc23-4b89-921d-e080ba9b2981",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Легенды русского рока"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2008",
+      "id": "11ce0143-feef-4685-977f-2bba07d426ec",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в ДК Связи (Ленинград, декабрь 1986 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2000",
+      "id": "19e1af1c-1374-3c3d-93db-1a058a9f2efb",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "История этого мира"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "",
+      "id": "1be56d4c-431a-482a-803a-93e8bd92b455",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Музыкальная Энциклопедия. 100 Песен. Часть 5"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1999",
+      "id": "1c7557a0-ce8d-4158-94b6-6cfd70620ed3",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "The Best Of"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2013",
+      "id": "22b8a2a5-c8f4-4b44-b324-15c1f5d969d0",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+        "0c60f497-ff81-3818-befd-abfc84a4858b"
+      ],
+      "secondary-types": [
+        "Compilation",
+        "Remix"
+      ],
+      "title": "Атаман"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2005",
+      "id": "22c6bc45-74bb-439f-b1d7-1d5423d1440d",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Энциклопедия российского рока. Диск 2"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "",
+      "id": "23d1cadb-7e25-4ee8-9122-cdb256cb4ea4",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Лучшее и любимое"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "",
+      "id": "23f11c07-1bcc-42b6-aaee-4c19c4a4e5ae",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в ДС \"Юбилейный\" (Ленинград, 2-4 декабря 1988 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-08-05",
+      "id": "2e1e5241-a988-4a4d-9cd4-7e910956b36c",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в ДК Связи (Ленинград, 24 апреля 1987 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1987",
+      "id": "2ea73759-38ee-4e5b-8ec4-bcffcd097a0b",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Старт"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2001",
+      "id": "31447c4a-fcc2-3ede-8ab7-83e4d159d05f",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Grand Collection"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2008",
+      "id": "3190ca26-6766-46f1-8768-22e6b92d407d",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт на мемориале А. Башлачева в ДС Лужники (Москва, 20 ноября 1988 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1996",
+      "id": "3357c239-ca5c-34c0-82fd-98cd45b4bea2",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в рок-клубе"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1998",
+      "id": "380716f7-e43f-326f-ae4e-f94795b1839a",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Легенды русского рока. Выпуск 2"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-07-25",
+      "id": "3e662b41-48a0-4119-9081-3f3ae7ab5aff",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в Алма-Ате в ДС 50-летия Октября (Февраль 1989г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1984",
+      "id": "434837dc-fd44-3d55-b8be-f886a7e20560",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Начальник Камчатки"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-08-05",
+      "id": "439e4b30-f7f6-4020-8f22-8bd5c7d63380",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в Витебске в Летнем амфитеатре (Май 1989 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1985",
+      "id": "47d38327-c1f9-37b0-9524-4890bb24a2a1",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Это не любовь..."
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1986",
+      "id": "4dac3862-4555-3956-bbcf-e06e74b34ffc",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Ночь"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2018-06-07",
+      "id": "4dd11087-468c-4614-8a0b-6510abb402ae",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Лето (Песня для Цоя)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1983",
+      "id": "4e01741a-5474-3560-bacf-ef23f4e0530f",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "81598169-0d6c-3bce-b4be-866fa658eda3"
+      ],
+      "secondary-types": [
+        "Demo"
+      ],
+      "title": "46"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2005-07-15",
+      "id": "5313219f-e09e-4851-9b44-eb1009ad1b42",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Grand Collection"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1999",
+      "id": "58b7293e-224c-3c3b-862a-e4e197acf990",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Лучшие песни 82-88"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2001",
+      "id": "5cd9abb0-82c6-489e-bb16-eb5978e29410",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Звёздный падл"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1989",
+      "id": "665aae17-ac2d-4c91-966a-9dc9555f0da8",
+      "primary-type": "Single",
+      "primary-type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Maman"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2021",
+      "id": "6758056f-2b93-4c7a-afab-a294837a9d54",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Новое Звучание"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2006",
+      "id": "70d0a6a6-9813-47a3-97c4-3d016836a768",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Новая коллекция: Лучшие песни"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-08-05",
+      "id": "70ea458c-7450-4e6e-8f7f-7f04992791bc",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в СКК имени Ленина (конец концерта) (Ленинград, 4 сентября 1989 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-07-03",
+      "id": "7173ec22-c15f-4b24-89ee-631046619b82",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в Ленинградском рок-клубе (декабрь 1984г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1989",
+      "id": "73c0992b-766f-35b7-aa8b-e1d660d11565",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Последний герой"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-08-05",
+      "id": "767ae91e-cd95-42dd-8809-f96faaaef8db",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в ЛДМ (\"Спасем мир\") (Ленинград, 19 октября 1986 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2018-12-04",
+      "id": "7685d505-3595-4011-a530-7581d4fcbe20",
+      "primary-type": "Single",
+      "primary-type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Атаман"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2001",
+      "id": "78a6239c-7d4b-4b43-8125-158b0038c671",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Чёрный Альбом / Золотой Альбом"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1995",
+      "id": "7a6fdde5-d7e0-4a4f-8997-fe63159c6a7c",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "변화 (Change)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1988",
+      "id": "7ff1eff0-a8c8-37dc-807e-eea5a9e173b5",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Группа крови"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2022-12-22",
+      "id": "82f79d7c-66a7-478f-a941-a99fee38a109",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "12-22"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-08-05",
+      "id": "872df20b-1e25-4352-9569-bc5d5728a405",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в СКК имени Ленина (Ленинград, 28 ноября 1989 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2018-04-24",
+      "id": "89ace69f-7856-43ec-8b59-4e6933047a57",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Легенда"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2001",
+      "id": "89f0403a-66be-4935-8457-00b2443fa447",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "빅토르 최 (The Last Hero)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-07-27",
+      "id": "966290b4-f8a9-43ba-ae91-4398dbf6971b",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт во Дворце спорта \"Юбилейный\" (2 декабря 1988 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2008",
+      "id": "9776bac6-7c13-408f-bda5-73796072cd6c",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Новая коллекция: Лучшие песни, часть 2"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2020-07-27",
+      "id": "999d96f4-3672-4ca7-af95-5868fbabc752",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Любовь - это не шутка"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1999",
+      "id": "99aeb861-72f1-346c-82f9-cc7c040e23fd",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Лучшие песни 88-90"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2025-10-03",
+      "id": "9d851ab5-8687-45de-b5e3-4807d3fbc4ca",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Молнии Индры"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2005",
+      "id": "9e627c54-f1b9-47e8-b163-3c333f719547",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Энциклопедия российского рока. Диск 1"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2021-03-14",
+      "id": "a25eca3f-35e2-4ebc-9f9d-86768dce8525",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Кино в Севкабеле"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-08-05",
+      "id": "a8cbfc90-4f6c-4239-8a32-490625c064cb",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в Кирове в ДК Металлургов (25 октября 1986г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1990",
+      "id": "ade86acf-8b9f-35ca-a4fa-3bd32b196513",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Чёрный альбом"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1992",
+      "id": "ae5e3d3d-18f0-3550-a420-b884f583af64",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Неизвестные песни"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "",
+      "id": "b4be6741-a9b3-44d7-81b8-eab2d7d28780",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Millennium Hits"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-07-03",
+      "id": "b4d03ff2-c814-4835-9925-09522ea6fe41",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт на V фестивале ленинградского рок-клуба в ЛДМ (3 июня 1987 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-07-27",
+      "id": "b613f5cd-12a9-4599-ae83-91c9b324fe97",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в СКК имени Ленина (Ленинград, 28 октября 1988 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2021-05",
+      "id": "b8961d82-e636-428b-ae46-ce56780c1189",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Кинохроники 2021/1982"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2002",
+      "id": "bacc3ebd-3682-32f6-9674-d22b5cb929e5",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+        "81598169-0d6c-3bce-b4be-866fa658eda3"
+      ],
+      "secondary-types": [
+        "Compilation",
+        "Demo"
+      ],
+      "title": "Последние записи"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2021-03-01",
+      "id": "c1f39065-fe30-4638-a2ee-e3c4660c363c",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Кино в Дании. Христания x Фестиваль «Next Stop Sovjet» 14.01.1989"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2002",
+      "id": "c37050aa-cfbd-4325-9199-edb3d0b57b8d",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в Дубне"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1998-08",
+      "id": "c73f0a64-27ee-333c-927e-d5480c9e4528",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Кино"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2022-05-16",
+      "id": "cb2a1b00-f19c-47bc-a309-698eed3adf42",
+      "primary-type": "Single",
+      "primary-type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Любовь к оружию"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2012",
+      "id": "cefaf46b-a85d-43ac-839a-5d44c9ece9ff",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "Коллекция"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1982",
+      "id": "cf62ef2a-199b-3831-b6f8-e560d324b2ed",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "45"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2004",
+      "id": "d7d8fb40-4246-4272-9513-4c23b0ccb17a",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Неизвестные записи"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "1989",
+      "id": "dc09a068-cac5-3b2e-8ca3-cb6b230237cb",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [],
+      "secondary-types": [],
+      "title": "Звезда по имени Солнце"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2000",
+      "id": "de4c2374-a0fa-4a6c-8c54-4c831880017c",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "0c60f497-ff81-3818-befd-abfc84a4858b"
+      ],
+      "secondary-types": [
+        "Remix"
+      ],
+      "title": "Печаль"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2002",
+      "id": "e3dac2c5-2d61-4b73-b404-fd618afd49a4",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+        "22a628ad-c082-3c4f-b1b6-d41665107b88"
+      ],
+      "secondary-types": [
+        "Compilation",
+        "Soundtrack"
+      ],
+      "title": "В кино"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2015-07-03",
+      "id": "e803c48f-d954-4010-8bb7-c69515217f7b",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт на Фестивале Московской рок-лаборатории (Москва, 8 июня 1986 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2017-06-21",
+      "id": "ea3a6402-3997-476e-9312-55feea44a6ae",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "55"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2008",
+      "id": "f2881c98-8439-4fba-9512-da43bc21b639",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в СК \"Олимпийский\" (Москва, 5 мая 1990 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2008",
+      "id": "f29f03b0-8738-4c90-aa98-ecd4d1ba8250",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+      ],
+      "secondary-types": [
+        "Live"
+      ],
+      "title": "Концерт в СКК имени Ленина (Ленинград, 8 мая 1990 г.)"
+    },
+    {
+      "disambiguation": "",
+      "first-release-date": "2010",
+      "id": "f74d5c6e-421b-49e6-9155-c74cb911d7d8",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-type-ids": [
+        "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ],
+      "secondary-types": [
+        "Compilation"
+      ],
+      "title": "20 лет без…"
+    }
+  ]
+}
