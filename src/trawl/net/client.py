@@ -61,8 +61,12 @@ class HttpClient:
     async def get_json(self, url: str, params: Mapping[str, str] | None = None) -> Any:
         return self._json(await self._request("GET", url, params=params))
 
-    async def post_form(self, url: str, data: Mapping[str, str]) -> Any:
-        return self._json(await self._request("POST", url, data=data))
+    async def post_form(
+        self, url: str, data: Mapping[str, str], *, follow_redirects: bool = True
+    ) -> Any:
+        return self._json(
+            await self._request("POST", url, data=data, follow_redirects=follow_redirects)
+        )
 
     async def api_json(
         self,
@@ -74,7 +78,7 @@ class HttpClient:
         params: Mapping[str, str] | None = None,
     ) -> object:
         response = await self._request(
-            method, url, params=params, json=body, request_headers=headers
+            method, url, params=params, json=body, request_headers=headers, follow_redirects=False
         )
         return self._json(response) if response.content else None
 
@@ -104,6 +108,7 @@ class HttpClient:
         accept_encoding: str | None = None,
         json: object = None,
         request_headers: Mapping[str, str] | None = None,
+        follow_redirects: bool = True,
     ) -> httpx.Response:
         last = HttpError(url, None, "no HTTP attempts configured")
         for attempt in range(self._max_attempts):
@@ -119,7 +124,7 @@ class HttpClient:
                     data=data,
                     headers=headers,
                     json=json,
-                    follow_redirects=request_headers is None,
+                    follow_redirects=follow_redirects,
                 )
             except httpx.TransportError as exc:
                 last = HttpError(url, None, str(exc))

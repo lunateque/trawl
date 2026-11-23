@@ -15,6 +15,7 @@ class MbLink:
 @dataclass(frozen=True)
 class ForeignLink:
     service: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -60,11 +61,12 @@ def parse_add_target(text: str) -> Target:
                 "invalid MusicBrainz link; expected an artist, release group, release or recording"
             )
         if host == "open.spotify.com":
-            return ForeignLink("Spotify")
+            return ForeignLink("Spotify", f"https://{host}{url.path}")
         if host.startswith("music.yandex."):
-            return ForeignLink("Yandex Music")
+            return ForeignLink("Yandex Music", f"https://{host}{url.path}")
         if host in {"music.youtube.com", "youtube.com", "www.youtube.com", "youtu.be"}:
-            return ForeignLink("YouTube Music")
+            query = f"?{url.query}" if url.query else ""
+            return ForeignLink("YouTube Music", f"https://{host}{url.path}{query}")
         raise ValueError("unsupported link; use a MusicBrainz link or text")
     if separator := _SEPARATOR.search(text):
         artist, title = text[: separator.start()].strip(), text[separator.end() :].strip()

@@ -16,6 +16,7 @@ from trawl.net.limiter import RateLimiter
 from trawl.sources.base import FetchError, SourceWall
 from trawl.sources.soulseek import SoulseekSource
 from trawl.tag.replaygain import supports_opus
+from trawl.taste.sync import ERRORS, check_source, enabled_sources, read_secrets, taste_http
 from trawl.verify.probe import AudioError
 
 
@@ -164,6 +165,23 @@ async def check(config: Path, offline: bool) -> list[Check]:
     checks.append(
         Check("MusicBrainz", "SKIPPED", "offline") if offline else await _musicbrainz(cfg)
     )
+    try:
+        secrets = read_secrets(cfg)
+        sources = enabled_sources(cfg, secrets)
+    except ConfigError as exc:
+        checks.append(Check("Taste credentials", "FAIL", str(exc)))
+    else:
+        async with taste_http(cfg) as http:
+            for source in sources:
+                if offline:
+                    checks.append(Check(source, "SKIPPED", "offline"))
+                    continue
+                try:
+                    await check_source(source, cfg, secrets, http)
+                except ERRORS as exc:
+                    checks.append(Check(source, "FAIL", type(exc).__name__))
+                else:
+                    checks.append(Check(source, "OK", "reachable and authorized"))
     checks.extend(_existing_directory("Local inbox", path) for path in cfg.sources.local.inbox)
     if (
         "soulseek" in cfg.sources.order

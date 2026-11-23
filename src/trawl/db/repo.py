@@ -53,12 +53,15 @@ def insert_want(
     origin: Origin,
     origin_ref: str,
     limit: int | None,
+    *,
+    preserve_origin: bool = False,
 ) -> int:
     row = conn.execute(
         """INSERT INTO wants (kind, mbid, scope, origin, origin_ref, "limit", status, created_at)
         SELECT ?, ?, ?, ?, ?, ?, 'new', ?
         WHERE NOT EXISTS (
-            SELECT 1 FROM wants WHERE kind = ? AND mbid = ? AND scope = ? AND status != 'dropped'
+            SELECT 1 FROM wants WHERE kind=? AND mbid=? AND scope=? AND status!='dropped'
+            AND (NOT ? OR (origin=? AND origin_ref=?))
         ) RETURNING id""",
         (
             kind,
@@ -71,14 +74,18 @@ def insert_want(
             kind,
             mbid,
             scope,
+            preserve_origin,
+            origin,
+            origin_ref,
         ),
     ).fetchone()
     if row is None:
         row = conn.execute(
             """SELECT id FROM wants
-            WHERE kind = ? AND mbid = ? AND scope = ? AND status != 'dropped'
+            WHERE kind=? AND mbid=? AND scope=? AND status!='dropped'
+            AND (NOT ? OR (origin=? AND origin_ref=?))
             ORDER BY id LIMIT 1""",
-            (kind, mbid, scope),
+            (kind, mbid, scope, preserve_origin, origin, origin_ref),
         ).fetchone()
     return row["id"]
 

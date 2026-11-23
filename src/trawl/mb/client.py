@@ -83,6 +83,9 @@ class MusicBrainzClient:
         )
         return Release.from_json(data)
 
+    async def artist(self, mbid: str) -> ArtistRef:
+        return ArtistRef.from_json(await self._get(f"artist/{mbid}"))
+
     async def artist_genres(self, mbid: str) -> tuple[str, ...]:
         data = await self._get(f"artist/{mbid}", inc="genres")
         return genre_names(data.get("genres"))
@@ -107,6 +110,35 @@ class MusicBrainzClient:
         return [
             ReleaseRef.from_json(item)
             async for item in self._browse("release", recording=mbid, inc="release-groups")
+        ]
+
+    async def search_recordings(
+        self, artist: str, title: str, album: str | None = None, *, isrc: str | None = None
+    ) -> list[tuple[RecordingRef, int]]:
+        if isrc:
+            query = f"isrc:{_phrase(isrc)}"
+        else:
+            query = f"artist:{_phrase(artist)} AND recording:{_phrase(title)}"
+            if album:
+                query += f" AND release:{_phrase(album)}"
+        data = await self._get("recording", query=query, limit="25")
+        results: list[tuple[RecordingRef, int]] = []
+        for item in array_value(data.get("recordings")):
+            row = object_value(item)
+            score = row.get("score")
+            # Indexed recording results do not include complete release groups.
+            results.append(
+                (
+                    RecordingRef.from_json({**row, "releases": []}),
+                    score if isinstance(score, int) else 0,
+                )
+            )
+        return results
+
+    async def search_barcode(self, upc: str) -> list[ReleaseRef]:
+        data = await self._get("release", query=f"barcode:{_phrase(upc)}", limit="25")
+        return [
+            ReleaseRef.from_json(object_value(item)) for item in array_value(data.get("releases"))
         ]
 
     async def artist_release_groups(

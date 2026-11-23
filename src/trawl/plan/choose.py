@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
 
 from trawl.config import PlanConfig
-from trawl.mb.models import Release, ReleaseGroupRef
+from trawl.mb.models import Release, ReleaseGroupRef, ReleaseRef
 
 
 def choose_release_group(
@@ -31,6 +31,12 @@ def choose_release_group(
         default=None,
     )
     return selected[1] if selected is not None else None
+
+
+def choose_recording_group(releases: Sequence[ReleaseRef]) -> ReleaseGroupRef | None:
+    groups = {item.release_group.mbid: item.release_group for item in releases}
+    official = {item.release_group.mbid for item in releases if item.status == "Official"}
+    return choose_release_group(list(groups.values()), official.__contains__)
 
 
 def choose_release(

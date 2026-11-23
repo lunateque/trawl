@@ -167,17 +167,20 @@ def attempt_counts(conn: sqlite3.Connection, since: int = 0) -> list[tuple[str, 
     ]
 
 
-def retry(conn: sqlite3.Connection, *, skipped: bool) -> int:
+def retry(conn: sqlite3.Connection, *, skipped: bool, due: str | None = None) -> int:
     changed = 0
     for track_id, state in conn.execute(
-        "SELECT id, state FROM tracks WHERE state='missing' OR (? AND state='skipped')", (skipped,)
+        """SELECT id,state FROM tracks WHERE
+        (state='missing' AND (? IS NULL OR next_try_at <= ?))
+        OR (? AND state='skipped')""",
+        (due, due, skipped),
     ).fetchall():
         changed += transition(
             conn,
             track_id,
             TrackState(state),
             TrackState.PLANNED,
-            Actor.USER,
+            Actor.USER if due is None else Actor.RUNNER,
             path=None,
             pinned_candidate=None,
             next_try_at=None,

@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from os import environ
 from pathlib import Path
@@ -59,11 +60,54 @@ class GenreConfig:
 
 
 @dataclass(frozen=True)
+class TasteTier:
+    min_plays: int
+    scope: Literal["discography", "album"]
+    limit: int
+
+
+@dataclass(frozen=True)
+class ListenBrainzConfig:
+    user: str = ""
+    range: str = "all_time"
+    min_track_plays: int = 3
+
+
+@dataclass(frozen=True)
+class TasteConfig:
+    listenbrainz: ListenBrainzConfig = ListenBrainzConfig()
+    yandex_playlists: tuple[str, ...] = ()
+    yandex_likes: bool = True
+    spotify_playlists: tuple[str, ...] = ()
+    spotify_likes: bool = True
+    tiers: tuple[TasteTier, ...] = (
+        TasteTier(6, "discography", 14),
+        TasteTier(3, "discography", 10),
+        TasteTier(2, "discography", 3),
+        TasteTier(1, "album", 1),
+    )
+    follow_max_tier: int = 2
+    release_types: tuple[str, ...] = ("album", "ep")
+
+
+@dataclass(frozen=True)
+class WatchConfig:
+    taste_every: int = 6 * 3600
+    releases_every: int = 24 * 3600
+    queue_every: int = 15 * 60
+    upgrade_every: int = 24 * 3600
+
+
+@dataclass(frozen=True)
 class Secrets:
     acoustid_key: str | None = field(default=None, repr=False)
     youtube_cookies: Path | None = field(default=None, repr=False)
     slskd_url: str = field(default="http://localhost:5030", repr=False)
     slskd_api_key: str | None = field(default=None, repr=False)
+    listenbrainz_token: str | None = field(default=None, repr=False)
+    yandex_token: str | None = field(default=None, repr=False)
+    spotify_client_id: str | None = field(default=None, repr=False)
+    spotify_refresh_token: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -81,6 +125,9 @@ class Config:
     retry_missing_days: int = 7
     genres: GenreConfig = field(default_factory=GenreConfig)
     upgrade_older_than_days: int = 14
+    taste: TasteConfig = TasteConfig()
+    likes_scope: Literal["track", "album"] = "track"
+    watch: WatchConfig = WatchConfig()
 
 
 class ConfigError(Exception):
@@ -231,6 +278,68 @@ def _sources(values: dict[str, object], text: str) -> SourcesConfig:
     )
 
 
+def _taste(values: dict[str, object], text: str) -> TasteConfig:
+    sections = {
+        "listenbrainz": {"user", "range", "min_track_plays"},
+        "yandex": {"playlists", "likes"},
+        "spotify": {"playlists", "likes"},
+        "releases": {"types"},
+    }
+    _check_keys(values, {*sections, "tiers", "follow_max_tier"}, text, ("taste",))
+    for name, keys in sections.items():
+        _check_keys(_table(values, name), keys, text, ("taste", name))
+    lb = _table(values, "listenbrainz")
+    period = _string(lb, "range", "all_time")
+    if period not in {"this_week", "this_month", "this_year", "all_time"}:
+        raise ConfigError("taste.listenbrainz.range: expected this_week/month/year or all_time")
+    tiers = TasteConfig().tiers
+    if (raw := values.get("tiers")) is not None:
+        if not isinstance(raw, list) or not raw:
+            raise ConfigError("taste.tiers: expected a nonempty array of tables")
+        parsed: list[TasteTier] = []
+        for value in cast("list[object]", raw):
+            if not isinstance(value, dict):
+                raise ConfigError("taste.tiers: expected a table")
+            tier = cast("dict[str, object]", value)
+            _check_keys(tier, {"min_plays", "scope", "limit"}, text, ("taste", "tiers"))
+            scope = _string(tier, "scope")
+            if scope != "discography" and scope != "album":
+                raise ConfigError("taste.tiers.scope: expected discography or album")
+            parsed.append(
+                TasteTier(
+                    _integer(tier.get("min_plays"), "taste.tiers.min_plays", 1),
+                    scope,
+                    _integer(tier.get("limit"), "taste.tiers.limit", 1),
+                )
+            )
+        if len({tier.min_plays for tier in parsed}) != len(parsed):
+            raise ConfigError("taste.tiers: duplicate min_plays")
+        tiers = tuple(sorted(parsed, key=lambda tier: tier.min_plays, reverse=True))
+    yandex, spotify = _table(values, "yandex"), _table(values, "spotify")
+    return TasteConfig(
+        ListenBrainzConfig(
+            _string(lb, "user", "").strip(),
+            period,
+            _integer(lb.get("min_track_plays", 3), "taste.listenbrainz.min_track_plays", 1),
+        ),
+        _strings(yandex.get("playlists", ()), "taste.yandex.playlists"),
+        _boolean(yandex.get("likes", True), "taste.yandex.likes"),
+        _strings(spotify.get("playlists", ()), "taste.spotify.playlists"),
+        _boolean(spotify.get("likes", True), "taste.spotify.likes"),
+        tiers,
+        _integer(values.get("follow_max_tier", 2), "taste.follow_max_tier", 0),
+        _strings(_table(values, "releases").get("types", ("album", "ep")), "taste.releases.types"),
+    )
+
+
+def _duration(values: dict[str, object], key: str, default: str) -> int:
+    value = _string(values, key, default)
+    if (match := re.fullmatch(r"([1-9][0-9]{0,8})([smhd])", value)) is None:
+        raise ConfigError(f"watch.{key}: expected a positive duration such as 15m")
+    count, unit = match.groups()
+    return int(count) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+
+
 def _parse(path: Path, text: str) -> Config:
     values: dict[str, object] = loads(text)
     sections = {
@@ -242,8 +351,18 @@ def _parse(path: Path, text: str) -> Config:
         "run": {"retry_missing_days"},
         "genres": {"map", "artist"},
         "upgrade": {"older_than_days"},
+        "likes": {"scope"},
+        "watch": {
+            "taste_every",
+            "releases_every",
+            "queue_every",
+            "upgrade_every",
+            "retry_missing_days",
+        },
     }
-    _check_keys(values, {"library_root", "data_dir", "contact_email", "sources", *sections}, text)
+    _check_keys(
+        values, {"library_root", "data_dir", "contact_email", "sources", "taste", *sections}, text
+    )
     for section, keys in sections.items():
         _check_keys(_table(values, section), keys, text, (section,))
     mb = _table(values, "mb")
@@ -261,6 +380,10 @@ def _parse(path: Path, text: str) -> Config:
     )
     lyrics = _boolean(_table(values, "lyrics").get("enabled", True), "lyrics.enabled")
     genres = _table(values, "genres")
+    likes_scope = _string(_table(values, "likes"), "scope", "track")
+    if likes_scope != "track" and likes_scope != "album":
+        raise ConfigError("likes.scope: expected track or album")
+    watch = _table(values, "watch")
     return Config(
         library_root=library_root,
         data_dir=Path(_string(values, "data_dir", user_data_dir("trawl"))),
@@ -282,11 +405,21 @@ def _parse(path: Path, text: str) -> Config:
         template=_string(_table(values, "library"), "template", DEFAULT_TEMPLATE),
         lyrics_enabled=lyrics,
         retry_missing_days=_integer(
-            _table(values, "run").get("retry_missing_days", 7), "run.retry_missing_days", 1
+            watch.get("retry_missing_days", _table(values, "run").get("retry_missing_days", 7)),
+            "retry_missing_days",
+            1,
         ),
         genres=GenreConfig(_string_map(genres, "map"), _string_map(genres, "artist")),
         upgrade_older_than_days=_integer(
             _table(values, "upgrade").get("older_than_days", 14), "upgrade.older_than_days", 0
+        ),
+        taste=_taste(_table(values, "taste"), text),
+        likes_scope=likes_scope,
+        watch=WatchConfig(
+            _duration(watch, "taste_every", "6h"),
+            _duration(watch, "releases_every", "24h"),
+            _duration(watch, "queue_every", "15m"),
+            _duration(watch, "upgrade_every", "24h"),
         ),
     )
 
@@ -305,7 +438,20 @@ def load_secrets(config: Path) -> Secrets:
     try:
         text = path.read_text(encoding="utf-8")
         values: dict[str, object] = loads(text)
-        _check_keys(values, {"acoustid_key", "youtube_cookies", "slskd_url", "slskd_api_key"}, text)
+        _check_keys(
+            values,
+            {
+                "acoustid_key",
+                "youtube_cookies",
+                "slskd_url",
+                "slskd_api_key",
+                "listenbrainz_token",
+                "yandex_token",
+                "spotify_client_id",
+                "spotify_refresh_token",
+            },
+            text,
+        )
         key = _string(values, "acoustid_key", "").strip()
         cookies = _string(values, "youtube_cookies", "")
         url = _string(values, "slskd_url", "http://localhost:5030").strip()
@@ -330,6 +476,10 @@ def load_secrets(config: Path) -> Secrets:
             path.parent / cookies if cookies else None,
             url,
             _string(values, "slskd_api_key", "").strip() or None,
+            _string(values, "listenbrainz_token", "").strip() or None,
+            _string(values, "yandex_token", "").strip() or None,
+            _string(values, "spotify_client_id", "").strip() or None,
+            _string(values, "spotify_refresh_token", "").strip() or None,
         )
     except FileNotFoundError:
         return Secrets()

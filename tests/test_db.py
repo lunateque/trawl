@@ -61,13 +61,13 @@ def test_migrations(tmp_path: Path) -> None:
     path = tmp_path / "new" / "test.sqlite"
     for _ in range(2):
         with closing(open_db(path)) as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 4
             assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
             assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
             assert db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
             assert (
                 db.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0]
-                == 11
+                == 13
             )
 
 

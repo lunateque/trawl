@@ -9,7 +9,7 @@ from trawl.db.repo import Kind, Scope, Want, WantStatus
 from trawl.mb.client import MusicBrainzClient
 from trawl.mb.models import MbDataError, Release, ReleaseGroupRef
 from trawl.net.client import HttpError
-from trawl.plan.choose import choose_release, choose_release_group
+from trawl.plan.choose import choose_recording_group, choose_release
 from trawl.plan.wants import create_want
 
 _LOG = logging.getLogger("trawl.plan")
@@ -49,9 +49,7 @@ async def _select_release(
     else:
         recording = await mb.recording(want.mbid)
         related = await mb.recording_releases(recording.mbid)
-        groups = {item.release_group.mbid: item.release_group for item in related}
-        official = {item.release_group.mbid for item in related if item.status == "Official"}
-        group = choose_release_group(list(groups.values()), official.__contains__)
+        group = choose_recording_group(related)
         if group is None:
             return None
         editions = {item.mbid for item in related if item.release_group.mbid == group.mbid}
@@ -104,7 +102,14 @@ async def _plan_want(
     want: Want,
 ) -> tuple[bool, int]:
     if want.kind == Kind.ARTIST:
-        groups = sort_discography(await mb.artist_release_groups(want.mbid, cfg.types))
+        counts: dict[str, int] = dict(
+            conn.execute(
+                """SELECT release_group_mbid,plays FROM artist_release_plays
+                WHERE artist_mbid=?""",
+                (want.mbid,),
+            ).fetchall()
+        )
+        groups = sort_discography(await mb.artist_release_groups(want.mbid, cfg.types), counts)
         children = groups[: want.limit if want.limit is not None else cfg.discography_limit]
         with conn:
             for group in children:

@@ -71,12 +71,13 @@ async def run_once(
     *,
     only: int | None = None,
     release_mbid: str | None = None,
+    stop: asyncio.Event | None = None,
 ) -> RunReport:
     if not secrets.acoustid_key:
         raise ValueError(
             "Configure acoustid_key in secrets.toml (https://acoustid.org/new-application)"
         )
-    runner = _Runner(conn, cfg, deps)
+    runner = _Runner(conn, cfg, deps, stop)
     cleanup_staging(conn, runner.stage)
     start = conn.execute("SELECT COALESCE(max(id),0) FROM attempts").fetchone()[0]
     groups = [
@@ -91,7 +92,8 @@ async def run_once(
 
     async def run_group(rows: list[Work]) -> None:
         async with limit:
-            await runner.release(rows)
+            if stop is None or not stop.is_set():
+                await runner.release(rows)
 
     async with asyncio.TaskGroup() as tasks:
         for rows in groups:
@@ -104,13 +106,19 @@ async def run_once(
 
 
 class _Runner:
-    def __init__(self, conn: sqlite3.Connection, cfg: Config, deps: RunDeps) -> None:
+    def __init__(
+        self, conn: sqlite3.Connection, cfg: Config, deps: RunDeps, stop: asyncio.Event | None
+    ) -> None:
         self.conn = conn
         self.cfg = cfg
         self.deps = deps
+        self.stop = stop
         self.stage = staging_dir(cfg.library_root)
         self.releases: dict[str, Release] = {}
         self.youtube = asyncio.Semaphore(cfg.sources.ytmusic_concurrency)
+
+    def stopping(self) -> bool:
+        return self.stop is not None and self.stop.is_set()
 
     def change(self, row: Work, state: State, **fields: object) -> bool:
         return transition(
@@ -142,6 +150,8 @@ class _Runner:
         misses: dict[str, Work] = {}
         tracks: dict[str, Track] = {}
         for row in rows:
+            if self.stopping():
+                return
             if (track := canonical.get(row.track_mbid)) is None:
                 log.error("Track %s has disappeared from release %s", row.track_mbid, mbid)
                 continue
@@ -160,6 +170,8 @@ class _Runner:
             if row.state == State.SEARCHING:
                 misses[row.track_mbid] = row
         for row in list(misses.values()):
+            if self.stopping():
+                return
             if row.pin is not None:
                 await self.pinned(row, tracks[row.track_mbid])
                 del misses[row.track_mbid]
@@ -174,6 +186,8 @@ class _Runner:
         initial_pins = {row.id: row.pin for row in rows}
         # A pin written during an await takes precedence over the automatic result.
         for row in queue.pending(self.conn, release_mbid=mbid):
+            if self.stopping():
+                return
             if (
                 row.id in ids
                 and row.state == State.SEARCHING
@@ -309,6 +323,8 @@ class _Runner:
         tried: set[str] = set()
         imports = imported_folder(self.conn, release)
         for imported in imports:
+            if self.stopping():
+                return None
             source = LocalSource(
                 (),
                 move=self.cfg.sources.local.move,
@@ -323,6 +339,8 @@ class _Runner:
             if not misses:
                 return None
         for source in self.deps.sources:
+            if self.stopping():
+                return None
             if until := queue.pause_until(self.conn, source.name):
                 delayed.add(until)
                 continue
@@ -342,6 +360,8 @@ class _Runner:
                 else:
                     ranked = await self.candidate_search(source, release, basis, album)
                 for candidate, mapping, reliable in ranked:
+                    if self.stopping():
+                        return None
                     if until := queue.pause_until(self.conn, source.name):
                         delayed.add(until)
                         break
@@ -367,6 +387,8 @@ class _Runner:
                         queue.attempt(
                             self.conn, row.id, source.name, None, None, "fetch_failed", str(exc)
                         )
+        if self.stopping():
+            return None
         if delayed:
             self.requeue(misses, min(delayed))
             return None
@@ -574,6 +596,8 @@ class _Runner:
     async def finish(self, release: Release, tracks: dict[str, Track], ids: set[int]) -> None:
         tags = AlbumTags(self.cfg, self.deps.http, self.deps.mb, self.deps.tools, release)
         for row in queue.pending(self.conn, release_mbid=release.mbid):
+            if self.stopping():
+                return
             if (
                 row.id not in ids
                 or row.path is None
@@ -646,6 +670,8 @@ class _Runner:
 
     async def gain(self) -> None:
         for mbid in queue.gain_releases(self.conn):
+            if self.stopping():
+                return
             paths = queue.done_paths(self.conn, mbid)
             try:
                 release = await self._get_release(mbid)

@@ -124,13 +124,10 @@ def test_text_selection(
         assert tuple(row) == (KINO, "discography", 14)
 
 
-def test_foreign_link_is_rejected_without_configuration() -> None:
-    result = CliRunner().invoke(cli.app, ["add", "https://open.spotify.com/track/123"])
+def test_invalid_foreign_link_is_rejected_without_configuration() -> None:
+    result = CliRunner().invoke(cli.app, ["add", "https://open.spotify.com/unknown"])
     assert result.exit_code == 2
-    assert (
-        "links from Spotify are supported from step 5; use a MusicBrainz link or text"
-        in result.output
-    )
+    assert "Invalid Spotify link" in result.output
 
 
 def test_doctor_offline(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -100,7 +100,11 @@ async def _gain(conn: sqlite3.Connection, deps: RunDeps, mbid: str) -> None:
 
 
 async def _upgrade_release(
-    conn: sqlite3.Connection, cfg: Config, deps: RunDeps, release: Release
+    conn: sqlite3.Connection,
+    cfg: Config,
+    deps: RunDeps,
+    release: Release,
+    stop: asyncio.Event | None,
 ) -> tuple[int, str | None]:
     targets = {
         mbid: _LibraryTrack(track_id, Path(path))
@@ -119,6 +123,8 @@ async def _upgrade_release(
     replaced = 0
     delayed: set[str] = set()
     for source in deps.sources:
+        if stop is not None and stop.is_set():
+            break
         if not isinstance(source, LocalSource | SoulseekSource):
             continue
         if until := queue.pause_until(conn, source.name):
@@ -134,6 +140,8 @@ async def _upgrade_release(
                 release, [(release, basis)], album=True, lossless_only=True, min_coverage=0
             )
             for found in candidates:
+                if stop is not None and stop.is_set():
+                    break
                 if not targets.keys() & found.mapping.keys():
                     continue
                 with TemporaryDirectory(dir=staging) as raw_workspace:
@@ -160,6 +168,8 @@ async def _upgrade_release(
                     )
                     mismatch = any(checked.mismatch for _, checked in checks.values())
                     for key, (file, result) in checks.items():
+                        if stop is not None and stop.is_set():
+                            break
                         if (track := targets.get(key)) is None:
                             continue
                         decision = result.with_folder_guard(mismatch)
@@ -231,7 +241,12 @@ async def _upgrade_release(
 
 
 async def upgrade_pass(
-    conn: sqlite3.Connection, cfg: Config, deps: RunDeps, *, now: bool = False
+    conn: sqlite3.Connection,
+    cfg: Config,
+    deps: RunDeps,
+    *,
+    now: bool = False,
+    stop: asyncio.Event | None = None,
 ) -> UpgradeReport:
     releases = [
         row[0]
@@ -248,19 +263,24 @@ async def upgrade_pass(
     ]
     if not any(isinstance(source, LocalSource | SoulseekSource) for source in deps.sources):
         return UpgradeReport(0, 0, 0)
-    replaced = deferred = 0
+    checked = replaced = deferred = 0
     for mbid in releases:
+        if stop is not None and stop.is_set():
+            break
+        checked += 1
         try:
             release = await deps.mb.release(mbid)
-            count, retry = await _upgrade_release(conn, cfg, deps, release)
+            count, retry = await _upgrade_release(conn, cfg, deps, release, stop)
         except (HttpError, MbDataError, OSError) as exc:
             log.warning("Cannot check upgrades for %s: %s", mbid, exc)
             count, retry = 0, queue.after(_RETRY)
+        replaced += count
+        if stop is not None and stop.is_set():
+            break
         with conn:
             conn.execute(
                 "UPDATE releases SET upgrade_checked_at=?,upgrade_next_try_at=? WHERE mbid=?",
                 (queue.now(), retry, mbid),
             )
-        replaced += count
         deferred += retry is not None
-    return UpgradeReport(len(releases), replaced, deferred)
+    return UpgradeReport(checked, replaced, deferred)

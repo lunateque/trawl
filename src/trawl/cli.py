@@ -3,6 +3,7 @@ import sqlite3
 from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager, closing, contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Never
 from uuid import UUID
@@ -32,13 +33,23 @@ from trawl.plan.wants import (
     create_want,
     parse_add_target,
 )
+from trawl.resolve.match import resolve_artist
 from trawl.runner.lock import LockBusy, acquire
 from trawl.runner.run import RunDeps, run_once
+from trawl.runner.service import service as manage_service
 from trawl.runner.upgrade import upgrade_pass
+from trawl.runner.watch import Job, graceful_stop
+from trawl.runner.watch import watch as watch_jobs
 from trawl.sources.base import Source
 from trawl.sources.local import LocalSource
 from trawl.sources.soulseek import SoulseekSource
 from trawl.sources.ytmusic import YTMusic, YTMusicSource, video_id
+from trawl.taste.links import entity, metadata
+from trawl.taste.oauth import auth_spotify
+from trawl.taste.releases import save_artist
+from trawl.taste.store import DEFAULT_SCOPE, SyncReport, bind, ingest
+from trawl.taste.sync import ERRORS as TASTE_ERRORS
+from trawl.taste.sync import TasteSource, read_secrets, sync_taste, taste_http
 from trawl.verify.fingerprint import AcoustId
 from trawl.verify.probe import AudioError
 
@@ -144,14 +155,6 @@ async def _resolve(
         return None if selection is None else MbLink(Kind.ARTIST, artists[selection].mbid)
 
 
-_DEFAULT_SCOPE = {
-    Kind.ARTIST: Scope.DISCOGRAPHY,
-    Kind.RELEASE_GROUP: Scope.ALBUM,
-    Kind.RELEASE: Scope.ALBUM,
-    Kind.RECORDING: Scope.TRACK,
-}
-
-
 @app.command()
 def add(
     ctx: typer.Context,
@@ -160,17 +163,21 @@ def add(
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
     yes: Annotated[bool, typer.Option("--yes", help="Accept the first search result")] = False,
 ) -> None:
-    """Add a MusicBrainz link, artist, or artist - album to the wants list."""
+    """Add a music link, artist, or artist - album to the wants list."""
     try:
         parsed = parse_add_target(target)
     except ValueError as exc:
         _fail(str(exc), 2)
     if isinstance(parsed, ForeignLink):
-        _fail(
-            f"links from {parsed.service} are supported from step 5; "
-            "use a MusicBrainz link or text",
-            2,
-        )
+        try:
+            kind, _ = entity(parsed)
+        except ConfigError as exc:
+            _fail(str(exc), 2)
+        if limit is not None and kind != "artist":
+            _fail("--limit applies only to artist wants", 2)
+        with _session(ctx.obj) as (cfg, conn):
+            asyncio.run(_add_foreign(cfg, conn, parsed, scope, limit))
+        return
     if limit is not None and (
         isinstance(parsed, TextAlbum) or (isinstance(parsed, MbLink) and parsed.kind != Kind.ARTIST)
     ):
@@ -189,12 +196,36 @@ def add(
                 conn,
                 link.kind,
                 link.mbid,
-                scope or _DEFAULT_SCOPE[link.kind],
+                scope or DEFAULT_SCOPE[link.kind],
                 Origin.MANUAL,
                 target,
                 limit,
             )
         typer.echo(f"Want {want_id}: {link.kind} {link.mbid}")
+
+
+async def _add_foreign(
+    cfg: Config, conn: sqlite3.Connection, link: ForeignLink, scope: Scope | None, limit: int | None
+) -> None:
+    report = SyncReport()
+    try:
+        async with taste_http(cfg) as http, make_mb(cfg, conn) as mb:
+            tracks = await metadata(http, read_secrets(cfg), link)
+            if not tracks:
+                _fail(f"{link.service} did not return any media", 1)
+            for track in tracks:
+                await ingest(
+                    conn,
+                    mb,
+                    cfg,
+                    track,
+                    report,
+                    scope=scope or DEFAULT_SCOPE[track.kind],
+                    limit=limit,
+                )
+    except TASTE_ERRORS as exc:
+        _fail(str(exc), 1)
+    typer.echo(f"Wants: {report.wants}; unresolved: {report.unresolved}")
 
 
 @app.command()
@@ -288,9 +319,15 @@ async def _run_deps(
         await http.aclose()
 
 
-async def _process(cfg: Config, conn: sqlite3.Connection, only: int | None = None) -> None:
+async def _process(
+    cfg: Config,
+    conn: sqlite3.Connection,
+    only: int | None = None,
+    *,
+    stop: asyncio.Event | None = None,
+) -> None:
     async with _run_deps(cfg, conn) as (secrets, deps):
-        report = await run_once(conn, cfg, secrets, deps, only=only)
+        report = await run_once(conn, cfg, secrets, deps, only=only, stop=stop)
     _show_run(report.states, report.outcomes, report.pauses)
 
 
@@ -310,17 +347,54 @@ def run(
     ctx: typer.Context,
     *,
     once: Annotated[bool, typer.Option("--once", help="Process the current queue once")] = False,
-    watch: Annotated[bool, typer.Option("--watch", help="Available from step 6")] = False,
+    watch: Annotated[bool, typer.Option("--watch", help="Process the queue on a schedule")] = False,
 ) -> None:
     """Process the current queue."""
-    if watch:
-        _fail("--watch is available from step 6", 2)
+    if once and watch:
+        _fail("Choose either --once or --watch", 2)
     with _session(ctx.obj) as (cfg, conn):
         try:
             with acquire(cfg.data_dir):
-                asyncio.run(_process(cfg, conn))
+                asyncio.run(_watch(cfg, conn) if watch else _process(cfg, conn))
         except LockBusy as exc:
             _fail(str(exc), 3)
+
+
+async def _watch(cfg: Config, conn: sqlite3.Connection) -> None:
+    stop = asyncio.Event()
+
+    async def taste(source: TasteSource) -> None:
+        async with make_mb(cfg, conn) as mb:
+            await _sync(conn, mb, cfg, source, releases=False)
+
+    async def planning() -> None:
+        async with make_mb(cfg, conn) as mb:
+            report = await plan_new_wants(conn, mb, cfg.plan)
+        if report.errors:
+            raise ConfigError(f"{report.errors} wants failed to plan")
+
+    async def retry_due() -> None:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            queue.retry(conn, skipped=False, due=queue.now())
+
+    with graceful_stop(stop):
+        await watch_jobs(
+            conn,
+            [
+                Job("taste", cfg.watch.taste_every, lambda: taste(TasteSource.ALL)),
+                Job("releases", cfg.watch.releases_every, lambda: taste(TasteSource.RELEASES)),
+                Job("plan", cfg.watch.queue_every, planning),
+                Job("run", cfg.watch.queue_every, lambda: _process(cfg, conn, stop=stop)),
+                Job("retry", cfg.watch.queue_every, retry_due),
+                Job(
+                    "upgrade",
+                    cfg.watch.upgrade_every,
+                    lambda: _upgrade(cfg, conn, False, stop=stop),
+                ),
+            ],
+            stop,
+        )
 
 
 async def _import_folder(cfg: Config, conn: sqlite3.Connection, directory: Path) -> None:
@@ -347,9 +421,11 @@ def import_command(
             _fail(str(exc), 1)
 
 
-async def _upgrade(cfg: Config, conn: sqlite3.Connection, now: bool) -> None:
+async def _upgrade(
+    cfg: Config, conn: sqlite3.Connection, now: bool, *, stop: asyncio.Event | None = None
+) -> None:
     async with _run_deps(cfg, conn) as (_, deps):
-        report = await upgrade_pass(conn, cfg, deps, now=now)
+        report = await upgrade_pass(conn, cfg, deps, now=now, stop=stop)
     typer.echo(
         f"Releases checked: {report.checked}; "
         f"tracks upgraded: {report.replaced}; deferred: {report.deferred}"
@@ -503,3 +579,141 @@ def doctor_command(
     Console().print(table)
     if any(result.status == "FAIL" for result in checks):
         raise typer.Exit(1)
+
+
+async def _sync(
+    conn: sqlite3.Connection,
+    mb: MusicBrainzClient,
+    cfg: Config,
+    source: TasteSource,
+    *,
+    releases: bool = True,
+) -> None:
+    results = await sync_taste(conn, mb, cfg, source, releases=releases)
+    for name, report, _ in results:
+        detail = f"; {report.message}" if report.message else ""
+        typer.echo(f"{name}: {report.wants} wants; {report.unresolved} unresolved{detail}")
+    if any(not ok for _, _, ok in results):
+        raise typer.Exit(1)
+
+
+@app.command("sync-taste")
+def sync_taste_command(ctx: typer.Context, source: TasteSource = TasteSource.ALL) -> None:
+    """Sync listening history, likes, playlists, or followed releases."""
+    with _session(ctx.obj) as (cfg, conn):
+
+        async def execute() -> None:
+            async with make_mb(cfg, conn) as mb:
+                await _sync(conn, mb, cfg, source)
+
+        asyncio.run(execute())
+
+
+@app.command()
+def link(ctx: typer.Context, unresolved_id: int, target: str) -> None:
+    """Resolve an external item with a MusicBrainz link."""
+    try:
+        parsed = parse_add_target(target)
+    except ValueError as exc:
+        _fail(str(exc), 2)
+    if not isinstance(parsed, MbLink):
+        _fail("Expected a MusicBrainz link", 2)
+    with _session(ctx.obj) as (cfg, conn):
+        want_id = bind(conn, unresolved_id, parsed, cfg.plan.discography_limit)
+    if want_id is None:
+        _fail(f"Unresolved item {unresolved_id} does not exist", 1)
+    typer.echo(f"Want {want_id}: {parsed.kind} {parsed.mbid}")
+
+
+@app.command()
+def unresolved(ctx: typer.Context) -> None:
+    """List external items not matched to MusicBrainz."""
+    with _session(ctx.obj) as (_, conn):
+        rows = conn.execute(
+            """SELECT id,origin,artist,title,album,origin_ref,reason
+            FROM unresolved ORDER BY id"""
+        ).fetchall()
+    table = Table("ID", "Origin", "Artist", "Title", "Album", "Reference", "Reason")
+    for row in rows:
+        table.add_row(*(Text(str(value if value is not None else "")) for value in row))
+    Console().print(table)
+
+
+def _follow(ctx: typer.Context, target: str, followed: bool) -> None:
+    try:
+        parsed = parse_add_target(target)
+    except ValueError as exc:
+        _fail(str(exc), 2)
+    if not (
+        isinstance(parsed, TextArtist)
+        or (isinstance(parsed, MbLink) and parsed.kind == Kind.ARTIST)
+    ):
+        _fail("Expected a MusicBrainz artist link or name", 2)
+    with _session(ctx.obj) as (cfg, conn):
+
+        async def execute() -> None:
+            async with make_mb(cfg, conn) as mb:
+                artist = (
+                    await mb.artist(parsed.mbid)
+                    if isinstance(parsed, MbLink)
+                    else await resolve_artist(mb, parsed.name)
+                )
+            if artist is None:
+                _fail("No exact MusicBrainz artist found; use an artist link", 1)
+            with conn:
+                save_artist(conn, artist, followed=followed, manual=True)
+            typer.echo(f"{'Following' if followed else 'Unfollowed'}: {artist.name}")
+
+        asyncio.run(execute())
+
+
+@app.command()
+def follow(ctx: typer.Context, artist: str) -> None:
+    """Follow new releases by a MusicBrainz artist."""
+    _follow(ctx, artist, True)
+
+
+@app.command()
+def unfollow(ctx: typer.Context, artist: str) -> None:
+    """Stop following an artist's new releases."""
+    _follow(ctx, artist, False)
+
+
+class AuthProvider(StrEnum):
+    SPOTIFY = "spotify"
+
+
+@app.command()
+def auth(ctx: typer.Context, provider: AuthProvider) -> None:
+    """Authorize a taste provider in your browser."""
+    opts: Options = ctx.obj
+    with _session(opts) as (cfg, _):
+        if not (client_id := read_secrets(cfg).spotify_client_id):
+            _fail("Configure spotify_client_id in secrets.toml first", 1)
+
+        async def execute() -> None:
+            async with taste_http(cfg) as http:
+                await auth_spotify(http, client_id, opts.config.with_name("secrets.toml"))
+
+        asyncio.run(execute())
+    typer.echo(f"Authorized {provider}")
+
+
+class ServiceAction(StrEnum):
+    INSTALL = "install"
+    UNINSTALL = "uninstall"
+    STATUS = "status"
+
+
+@app.command()
+def service(ctx: typer.Context, action: ServiceAction) -> None:
+    """Manage the background watch service."""
+    opts: Options = ctx.obj
+    try:
+        if action == ServiceAction.INSTALL:
+            load(opts.config)
+        code = manage_service(action, opts.config)
+    except (ConfigError, OSError) as exc:
+        _fail(str(exc), 1)
+    if code:
+        raise typer.Exit(code)
