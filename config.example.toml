@@ -18,3 +18,29 @@ countries = ["XW", "US", "GB"]
 prefer = "original"
 # Maximum release groups per manual artist want by default.
 discography_limit = 14
+
+[sources]
+order = ["ytmusic"]
+
+[sources.ytmusic]
+concurrency = 2
+
+[verify]
+acoustid_min_score = 0.80
+
+[library]
+template = "{albumartist}/{original_year} - {album}{disambiguation}/{disc_prefix}{track:02} - {title}.{ext}"
+
+[lyrics]
+enabled = true
+
+[run]
+retry_missing_days = 7
+
+[genres.map]
+
+[genres.artist]
+
+# In a separate secrets.toml beside this file:
+# acoustid_key = "your application key"
+# youtube_cookies = "cookies.txt" # optional

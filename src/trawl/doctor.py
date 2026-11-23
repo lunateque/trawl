@@ -7,11 +7,14 @@ from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Literal
 
-from trawl.config import Config, ConfigError, load
+from trawl.config import Config, ConfigError, load, load_secrets
 from trawl.db.connect import open_db
+from trawl.library.place import staging_dir
 from trawl.mb.client import MusicBrainzClient
 from trawl.net.client import HttpClient, HttpError
 from trawl.net.limiter import RateLimiter
+from trawl.tag.replaygain import supports_opus
+from trawl.verify.probe import AudioError
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,7 @@ def _database(path: Path) -> Check:
 def _binary(name: str, flag: str) -> Check:
     executable = shutil.which(name)
     if executable is None:
-        return Check(name, "WARNING", "not found on PATH")
+        return Check(name, "FAIL", "not found on PATH")
     try:
         # Executables and arguments are selected from a fixed list, not configuration.
         result = subprocess.run(  # noqa: S603
@@ -60,6 +63,31 @@ def _binary(name: str, flag: str) -> Check:
     if not lines:
         return Check(name, "FAIL", "version command returned no output")
     return Check(name, "OK", lines[0])
+
+
+def _opus() -> Check:
+    try:
+        if supports_opus():
+            return Check("rsgain Opus mode", "OK", "--opus-mode supported")
+    except (AudioError, OSError) as exc:
+        return Check("rsgain Opus mode", "FAIL", str(exc))
+    return Check("rsgain Opus mode", "FAIL", "rsgain custom must support --opus-mode")
+
+
+def _secrets(config: Path) -> Check:
+    try:
+        if load_secrets(config).acoustid_key:
+            return Check("AcoustID", "OK", "application key configured")
+    except ConfigError as exc:
+        return Check("AcoustID", "FAIL", str(exc))
+    return Check("AcoustID", "FAIL", "configure acoustid_key in secrets.toml")
+
+
+def _staging(library: Path) -> Check:
+    try:
+        return _directory("Staging (exclude from player scans)", staging_dir(library))
+    except OSError as exc:
+        return Check("Staging", "FAIL", str(exc))
 
 
 async def _musicbrainz(cfg: Config) -> Check:
@@ -100,6 +128,9 @@ async def check(config: Path, offline: bool) -> list[Check]:
                 ("rsgain", "--version"),
             )
         ),
+        _opus(),
+        _secrets(config),
+        _staging(cfg.library_root),
     ]
     checks.append(
         Check("MusicBrainz", "SKIPPED", "offline") if offline else await _musicbrainz(cfg)

@@ -15,6 +15,7 @@ from trawl.mb.models import (
     ReleaseRef,
     array_value,
     credit_string,
+    genre_names,
     object_value,
 )
 from trawl.net.client import HttpClient
@@ -81,6 +82,10 @@ class MusicBrainzClient:
             inc="recordings+artist-credits+release-groups+media+isrcs+labels+genres",
         )
         return Release.from_json(data)
+
+    async def artist_genres(self, mbid: str) -> tuple[str, ...]:
+        data = await self._get(f"artist/{mbid}", inc="genres")
+        return genre_names(data.get("genres"))
 
     async def release_group_releases(self, rg_mbid: str) -> list[Release]:
         return [

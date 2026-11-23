@@ -13,8 +13,8 @@ from rich.table import Table
 from rich.text import Text
 
 from trawl import __version__, doctor, log
-from trawl.config import Config, ConfigError, config_path, load
-from trawl.db import repo
+from trawl.config import Config, ConfigError, config_path, load, load_secrets
+from trawl.db import queue, repo
 from trawl.db.connect import open_db
 from trawl.db.repo import Kind, Origin, Scope
 from trawl.mb.client import MusicBrainzClient
@@ -31,6 +31,10 @@ from trawl.plan.wants import (
     create_want,
     parse_add_target,
 )
+from trawl.runner.lock import LockBusy, acquire
+from trawl.runner.run import RunDeps, run_once
+from trawl.sources.ytmusic import YTMusic, YTMusicSource, video_id
+from trawl.verify.fingerprint import AcoustId
 
 app = typer.Typer(help="Plan a tagged local music library with MusicBrainz.", no_args_is_help=True)
 
@@ -206,11 +210,146 @@ def plan(ctx: typer.Context, refresh: Annotated[bool, typer.Option("--refresh")]
         asyncio.run(run())
 
 
+def _source_report(
+    console: Console,
+    outcomes: list[tuple[str, int, int]],
+    pauses: list[queue.Pause],
+) -> None:
+    summary = Table("Source", "Accepted", "Rejected", title="Attempts")
+    for source, accepted, rejected in outcomes:
+        summary.add_row(source, str(accepted), str(rejected))
+    console.print(summary)
+    for pause in pauses:
+        console.print(Text(f"Wall: {pause.source} until {pause.until} | {pause.reason}"))
+
+
+async def _process(cfg: Config, conn: sqlite3.Connection, only: int | None = None) -> None:
+    if cfg.source_path is None:
+        raise ConfigError("Processing requires a configuration file")
+    secrets = load_secrets(cfg.source_path)
+    if not (key := secrets.acoustid_key):
+        _fail("Configure acoustid_key in secrets.toml (https://acoustid.org/new-application)", 1)
+    http = HttpClient(
+        f"trawl/{__version__} ( {cfg.contact_email} )",
+        {
+            host: RateLimiter(interval)
+            for host, interval in (
+                ("musicbrainz.org", 1.0),
+                ("api.acoustid.org", 1 / 3),
+                ("lrclib.net", 0.3),
+                ("coverartarchive.org", 0.2),
+            )
+        },
+    )
+    try:
+        source = YTMusicSource(YTMusic(), None, secrets.youtube_cookies)
+        report = await run_once(
+            conn,
+            cfg,
+            secrets,
+            RunDeps(
+                http,
+                MusicBrainzClient(http, conn, cfg.mb.cache_days),
+                [source],
+                AcoustId(http, key),
+            ),
+            only=only,
+        )
+    finally:
+        await http.aclose()
+    console = Console()
+    states = Table("State", "Count", title="Tracks")
+    for state, count in report.states:
+        states.add_row(state, str(count))
+    console.print(states)
+    _source_report(console, report.outcomes, report.pauses)
+
+
+@app.command()
+def run(
+    ctx: typer.Context,
+    *,
+    once: Annotated[bool, typer.Option("--once", help="Process the current queue once")] = False,
+    watch: Annotated[bool, typer.Option("--watch", help="Available from step 6")] = False,
+) -> None:
+    """Process the current queue."""
+    if watch:
+        _fail("--watch is available from step 6", 2)
+    with _session(ctx.obj) as (cfg, conn):
+        try:
+            with acquire(cfg.data_dir):
+                asyncio.run(_process(cfg, conn))
+        except LockBusy as exc:
+            _fail(str(exc), 3)
+
+
+@app.command()
+def retry(ctx: typer.Context, skipped: Annotated[bool, typer.Option("--skipped")] = False) -> None:
+    """Return missing tracks (and optionally skipped tracks) to the queue."""
+    with _session(ctx.obj) as (_, conn), conn:
+        conn.execute("BEGIN IMMEDIATE")
+        changed = queue.retry(conn, skipped=skipped)
+    typer.echo(f"Requeued: {changed}")
+
+
+@app.command()
+def pick(ctx: typer.Context, track: int, candidate: str) -> None:
+    """Verify a particular YouTube video or local file for a track."""
+    if "://" in candidate:
+        try:
+            ref, source = video_id(candidate), "ytmusic"
+        except ValueError as exc:
+            _fail(str(exc), 2)
+    else:
+        path = Path(candidate).resolve()
+        if not path.is_file():
+            _fail(f"No audio file at {path}", 2)
+        ref, source = str(path), "path"
+    with _session(ctx.obj) as (cfg, conn):
+        if cfg.source_path is None:
+            raise ConfigError("Pick requires a configuration file")
+        if not load_secrets(cfg.source_path).acoustid_key:
+            _fail("AcoustID key required for pick; configure acoustid_key in secrets.toml", 1)
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if not queue.pin(conn, track, source, ref):
+                _fail(f"Track {track} cannot be picked in its current state", 1)
+        try:
+            with acquire(cfg.data_dir):
+                asyncio.run(_process(cfg, conn, track))
+        except LockBusy as exc:
+            typer.echo(f"Pinned track {track}; {exc}")
+            return
+        row = conn.execute("SELECT state FROM tracks WHERE id=?", (track,)).fetchone()
+        if row[0] == "missing":
+            attempt = conn.execute(
+                "SELECT reason FROM attempts WHERE track_id=? ORDER BY id DESC LIMIT 1", (track,)
+            ).fetchone()
+            _fail(f"Track {track} missing: {attempt[0] if attempt else 'candidate rejected'}", 1)
+
+
+@app.command()
+def skip(ctx: typer.Context, target: str) -> None:
+    """Skip an unfinished track or the unfinished tracks of a release."""
+    try:
+        kind, key = _explain_target(target)
+        if kind not in {None, Kind.RELEASE}:
+            raise ValueError("expected a track ID or release MBID")
+    except ValueError as exc:
+        _fail(str(exc), 2)
+    with _session(ctx.obj) as (_, conn), conn:
+        conn.execute("BEGIN IMMEDIATE")
+        changed = queue.skip(conn, key)
+    typer.echo(f"Skipped: {changed}")
+
+
 @app.command()
 def status(ctx: typer.Context) -> None:
     """Show track and want counts."""
     with _session(ctx.obj) as (_, conn):
         counts = repo.status(conn)
+        outcomes = queue.attempt_counts(conn)
+        pauses = queue.pauses(conn)
     console = Console()
     tracks = Table("State", "Count", title="Tracks")
     for state, count in counts.tracks:
@@ -220,6 +359,7 @@ def status(ctx: typer.Context) -> None:
         wants.add_row(state, origin, str(count))
     console.print(tracks, wants, sep="\n")
     typer.echo(f"Unresolved: {counts.unresolved}")
+    _source_report(console, outcomes, pauses)
 
 
 def _explain_target(target: str) -> tuple[Kind | None, int | str]:

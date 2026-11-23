@@ -58,6 +58,12 @@ def _items[T](parse: Callable[[JsonObject], T], raw: object) -> tuple[T, ...]:
     return tuple(parse(object_value(item)) for item in array_value(raw))
 
 
+def genre_names(raw: object) -> tuple[str, ...]:
+    genres = list(map(object_value, array_value(raw)))
+    genres.sort(key=lambda genre: -(_integer(genre.get("count")) or 0))
+    return tuple(dict.fromkeys(_text(genre, "name") for genre in genres))
+
+
 @dataclass(frozen=True)
 class Credit:
     name: str
@@ -187,7 +193,7 @@ class Release:
             _items(Medium.from_json, data.get("media")),
             _optional_text(data.get("disambiguation")) or "",
             tuple(labels),
-            _items(lambda item: _text(item, "name"), data.get("genres")),
+            genre_names(data.get("genres")),
         )
 
 

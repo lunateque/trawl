@@ -59,21 +59,51 @@ class HttpClient:
                 pass
 
     async def get_json(self, url: str, params: Mapping[str, str] | None = None) -> Any:
-        last: HttpError
+        return self._json(await self._request("GET", url, params=params))
+
+    async def post_form(self, url: str, data: Mapping[str, str]) -> Any:
+        return self._json(await self._request("POST", url, data=data))
+
+    async def get_bytes(self, url: str) -> bytes:
+        response = await self._request("GET", url, accept_encoding="identity")
+        length = response.headers.get("Content-Length")
+        if length is not None and length != str(len(response.content)):
+            raise HttpError(str(response.url), response.status_code, "Content-Length mismatch")
+        return response.content
+
+    @staticmethod
+    def _json(response: httpx.Response) -> Any:
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise HttpError(
+                str(response.url), response.status_code, "invalid JSON response"
+            ) from exc
+
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        data: Mapping[str, str] | None = None,
+        accept_encoding: str | None = None,
+    ) -> httpx.Response:
+        last = HttpError(url, None, "no HTTP attempts configured")
         for attempt in range(self._max_attempts):
             delay = None
             try:
-                response = await self._client.get(url, params=params)
+                headers = {"Accept-Encoding": accept_encoding} if accept_encoding else None
+                response = await self._client.request(
+                    method, url, params=params, data=data, headers=headers
+                )
             except httpx.TransportError as exc:
                 last = HttpError(url, None, str(exc))
             else:
                 final_url = str(response.request.url)
                 code = response.status_code
                 if response.is_success:
-                    try:
-                        return response.json()
-                    except ValueError as exc:
-                        raise HttpError(final_url, code, "invalid JSON response") from exc
+                    return response
                 last = HttpError(final_url, code, f"HTTP {code}")
                 if code != 429 and not response.is_server_error:
                     raise last
@@ -84,6 +114,7 @@ class HttpClient:
             if delay is None:
                 delay = min(60, 2**attempt) * (0.5 + self._rand())
             await self._sleep(delay)
+        raise last
 
     async def aclose(self) -> None:
         await self._client.aclose()

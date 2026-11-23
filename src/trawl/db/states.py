@@ -1,6 +1,7 @@
 import sqlite3
 from collections.abc import Mapping
 from enum import StrEnum
+from typing import Literal
 
 
 class TrackState(StrEnum):
@@ -62,6 +63,8 @@ def transition(
     src: TrackState,
     dst: TrackState,
     actor: Actor,
+    *,
+    expected_pin: str | Literal[False] | None = False,
     **fields: object,
 ) -> bool:
     if actor not in ALLOWED.get((src, dst), ()):
@@ -70,4 +73,8 @@ def transition(
         raise ValueError(f"unknown transition fields: {', '.join(sorted(unknown))}")
     assignments = ", ".join(["state = ?", *(f"{name} = ?" for name in fields)])
     sql = f"UPDATE tracks SET {assignments} WHERE id = ? AND state = ?"  # noqa: S608
-    return conn.execute(sql, (dst, *fields.values(), track_id, src)).rowcount == 1
+    params = (dst, *fields.values(), track_id, src)
+    if expected_pin is not False:
+        sql += " AND pinned_candidate IS ?"
+        params += (expected_pin,)
+    return conn.execute(sql, params).rowcount == 1

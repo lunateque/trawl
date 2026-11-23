@@ -3,9 +3,14 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from trawl import cli
+from trawl.cli import app
+from trawl.db import queue
 from trawl.db.connect import open_db
 from trawl.db.states import Actor, TrackState, transition
+from trawl.runner.lock import acquire
 
 MOVES: set[tuple[str, str, Actor]] = {
     (src, dst, Actor.RUNNER)
@@ -40,7 +45,9 @@ MOVES: set[tuple[str, str, Actor]] = {
 def conn(tmp_path: Path):
     with closing(open_db(tmp_path / "data" / "trawl.sqlite")) as db:
         db.execute(
-            "INSERT INTO releases VALUES ('r','rg','Release','Artist',NULL,NULL,NULL,NULL,1,'{}')"
+            """INSERT INTO releases
+               (mbid,release_group_mbid,title,artist_credit,disc_count,choice_reason)
+               VALUES ('r','rg','Release','Artist',1,'{}')"""
         )
         db.execute("""
             INSERT INTO tracks (id,release_mbid,release_track_mbid,recording_mbid,disc,
@@ -54,7 +61,7 @@ def test_migrations(tmp_path: Path) -> None:
     path = tmp_path / "new" / "test.sqlite"
     for _ in range(2):
         with closing(open_db(path)) as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 2
             assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
             assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
             assert db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
@@ -88,3 +95,69 @@ def test_invalid_and_stale_moves(conn: sqlite3.Connection) -> None:
         transition(conn, 1, TrackState.PLANNED, TrackState.SEARCHING, Actor.RUNNER, id=5)
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE tracks SET state = 'invalid' WHERE id = 1")
+
+
+def test_runner_cannot_overwrite_new_pin(conn: sqlite3.Connection) -> None:
+    assert transition(
+        conn,
+        1,
+        TrackState.PLANNED,
+        TrackState.SEARCHING,
+        Actor.USER,
+        pinned_candidate="new",
+    )
+    assert not transition(
+        conn,
+        1,
+        TrackState.SEARCHING,
+        TrackState.FETCHED,
+        Actor.RUNNER,
+        expected_pin=None,
+    )
+    assert transition(
+        conn,
+        1,
+        TrackState.SEARCHING,
+        TrackState.FETCHED,
+        Actor.RUNNER,
+        expected_pin="new",
+    )
+
+
+def test_source_pause_backoff_resets_after_success(conn: sqlite3.Connection) -> None:
+    for seconds in (900, 1800, 3600):
+        first = queue.wall(conn, "ytmusic", "HTTP 429")
+        assert queue.wall(conn, "ytmusic", "HTTP 403") == first
+        row = conn.execute("SELECT backoff_s, reason FROM source_state").fetchone()
+        assert tuple(row) == (seconds, "HTTP 429")
+        conn.execute("UPDATE source_state SET paused_until='2000-01-01T00:00:00Z'")
+    queue.source_succeeded(conn, "ytmusic")
+    assert queue.pauses(conn) == []
+    queue.wall(conn, "ytmusic", "HTTP 403")
+    assert conn.execute("SELECT backoff_s FROM source_state").fetchone()[0] == 900
+
+
+def test_pick_persists_while_another_runner_holds_lock(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn.commit()
+    data = tmp_path / "data"
+    config = tmp_path / "config.toml"
+    config.write_text(f'contact_email="a@b"\ndata_dir="{data.as_posix()}"\n', encoding="utf-8")
+    (tmp_path / "secrets.toml").write_text('acoustid_key="fixture"\n', encoding="utf-8")
+
+    async def no_runner(*args: object, **kwargs: object) -> None:
+        pytest.fail("pick must not launch a second runner")
+
+    monkeypatch.setattr(cli, "_process", no_runner)
+    with acquire(data):
+        result = CliRunner().invoke(
+            app, ["--config", str(config), "pick", "1", "https://youtu.be/a1b2c3d4e5f"]
+        )
+    assert result.exit_code == 0, result.output
+    assert "Pinned track 1; another trawl is running" in result.output
+    work = queue.pending(conn)
+    assert work[0].state == TrackState.SEARCHING
+    assert work[0].pin is not None and "a1b2c3d4e5f" in work[0].pin

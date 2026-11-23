@@ -1,0 +1,29 @@
+{
+  "match": {
+    "status": "ok",
+    "results": [
+      {
+        "id": "match",
+        "score": 0.98,
+        "recordings": [
+          {
+            "id": "recording"
+          }
+        ]
+      }
+    ]
+  },
+  "empty": {
+    "status": "ok",
+    "results": []
+  },
+  "no_recordings": {
+    "status": "ok",
+    "results": [
+      {
+        "id": "unmapped",
+        "score": 0.98
+      }
+    ]
+  }
+}

@@ -139,11 +139,12 @@ def test_doctor_offline(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("trawl.doctor.shutil.which", missing)
     result = CliRunner().invoke(cli.app, ["--config", str(config), "doctor", "--offline"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert all(
-        text in result.output for text in ("WARNING", "ffmpeg", "fpcalc", "rsgain", "offline")
+        text in result.output
+        for text in ("FAIL", "ffmpeg", "fpcalc", "rsgain", "offline", "AcoustID")
     )
-    assert not list((config.parent / "library").iterdir())
+    assert (config.parent / "library" / ".trawl-staging").is_dir()
 
 
 def test_bad_config_exits_with_dotted_key(config: Path) -> None:

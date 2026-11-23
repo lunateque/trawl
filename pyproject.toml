@@ -3,7 +3,7 @@ name = "trawl"
 version = "0.1.0"
 description = "Plan and build a local music library"
 requires-python = ">=3.12"
-dependencies = ["httpx", "typer", "rich", "platformdirs"]
+dependencies = ["httpx", "typer", "rich", "platformdirs", "mutagen", "yt-dlp", "ytmusicapi"]
 
 [project.scripts]
 trawl = "trawl.cli:app"
@@ -37,3 +37,4 @@ include = ["src", "tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = ["tools: requires external audio tools"]

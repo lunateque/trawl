@@ -1,0 +1,127 @@
+{
+  "title": {
+    "vorbis": "TITLE",
+    "mp4": "©nam",
+    "id3": "TIT2"
+  },
+  "artist": {
+    "vorbis": "ARTIST",
+    "mp4": "©ART",
+    "id3": "TPE1"
+  },
+  "artists": {
+    "vorbis": "ARTISTS",
+    "mp4": "----:com.apple.iTunes:ARTISTS",
+    "id3": "TXXX:Artists"
+  },
+  "albumartist": {
+    "vorbis": "ALBUMARTIST",
+    "mp4": "aART",
+    "id3": "TPE2"
+  },
+  "album": {
+    "vorbis": "ALBUM",
+    "mp4": "©alb",
+    "id3": "TALB"
+  },
+  "track": {
+    "vorbis": "TRACKNUMBER",
+    "mp4": "trkn",
+    "id3": "TRCK"
+  },
+  "track_total": {
+    "vorbis": "TRACKTOTAL",
+    "mp4": "trkn",
+    "id3": "TRCK"
+  },
+  "disc": {
+    "vorbis": "DISCNUMBER",
+    "mp4": "disk",
+    "id3": "TPOS"
+  },
+  "disc_total": {
+    "vorbis": "DISCTOTAL",
+    "mp4": "disk",
+    "id3": "TPOS"
+  },
+  "date": {
+    "vorbis": "DATE",
+    "mp4": "©day",
+    "id3": "TDRC"
+  },
+  "original_date": {
+    "vorbis": "ORIGINALDATE",
+    "mp4": "----:com.apple.iTunes:ORIGINALDATE",
+    "id3": "TDOR"
+  },
+  "recording_mbid": {
+    "vorbis": "MUSICBRAINZ_TRACKID",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Track Id",
+    "id3": "UFID:http://musicbrainz.org"
+  },
+  "release_track_mbid": {
+    "vorbis": "MUSICBRAINZ_RELEASETRACKID",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Release Track Id",
+    "id3": "TXXX:MusicBrainz Release Track Id"
+  },
+  "release_mbid": {
+    "vorbis": "MUSICBRAINZ_ALBUMID",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Album Id",
+    "id3": "TXXX:MusicBrainz Album Id"
+  },
+  "release_group_mbid": {
+    "vorbis": "MUSICBRAINZ_RELEASEGROUPID",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Release Group Id",
+    "id3": "TXXX:MusicBrainz Release Group Id"
+  },
+  "artist_mbids": {
+    "vorbis": "MUSICBRAINZ_ARTISTID",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Artist Id",
+    "id3": "TXXX:MusicBrainz Artist Id"
+  },
+  "albumartist_mbids": {
+    "vorbis": "MUSICBRAINZ_ALBUMARTISTID",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Album Artist Id",
+    "id3": "TXXX:MusicBrainz Album Artist Id"
+  },
+  "release_types": {
+    "vorbis": "RELEASETYPE",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Album Type",
+    "id3": "TXXX:MusicBrainz Album Type"
+  },
+  "release_status": {
+    "vorbis": "RELEASESTATUS",
+    "mp4": "----:com.apple.iTunes:MusicBrainz Album Status",
+    "id3": "TXXX:MusicBrainz Album Status"
+  },
+  "isrcs": {
+    "vorbis": "ISRC",
+    "mp4": "----:com.apple.iTunes:ISRC",
+    "id3": "TSRC"
+  },
+  "labels": {
+    "vorbis": "LABEL",
+    "mp4": "----:com.apple.iTunes:LABEL",
+    "id3": "TPUB"
+  },
+  "genres": {
+    "vorbis": "GENRE",
+    "mp4": "©gen",
+    "id3": "TCON"
+  },
+  "compilation": {
+    "vorbis": "COMPILATION",
+    "mp4": "cpil",
+    "id3": "TCMP"
+  },
+  "lyrics": {
+    "vorbis": "LYRICS",
+    "mp4": "©lyr",
+    "id3": "USLT::und"
+  },
+  "cover": {
+    "vorbis": "METADATA_BLOCK_PICTURE",
+    "mp4": "covr",
+    "id3": "APIC:"
+  }
+}
