@@ -130,7 +130,7 @@ def test_picard_names_and_codec(
 @pytest.mark.parametrize(
     ("fixture", "expected"),
     [
-        ("match", [AcoustResult(0.98, ("recording",))]),
+        ("match", [AcoustResult(0.98, ("e2d192c6-7d16-4601-821f-ede64ab327ba",))]),
         ("empty", []),
         ("no_recordings", [AcoustResult(0.98, ())]),
     ],

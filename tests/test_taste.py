@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import mbid
 from typer.testing import CliRunner
 
 from trawl.cli import app
@@ -91,12 +92,12 @@ def test_youtube_add_resolves_playlist_tracks(
             json={
                 "recordings": [
                     {
-                        "id": "matched-mbid",
+                        "id": mbid("matched-mbid"),
                         "title": "Song",
                         "length": 200_000,
                         "score": 99,
                         "artist-credit": [
-                            {"name": "Artist", "artist": {"id": "artist", "name": "Artist"}}
+                            {"name": "Artist", "artist": {"id": mbid("artist"), "name": "Artist"}}
                         ],
                     }
                 ]
@@ -126,7 +127,7 @@ def test_youtube_add_resolves_playlist_tracks(
     assert "Wants: 0; unresolved: 1" in second.output
     with closing(open_db(tmp_path / "trawl.sqlite")) as conn:
         assert tuple(conn.execute("SELECT mbid,origin,scope FROM wants").fetchone()) == (
-            "matched-mbid",
+            mbid("matched-mbid"),
             "manual",
             "track",
         )

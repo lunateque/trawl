@@ -79,7 +79,7 @@ async def test_soulseek_search_and_transfer(tmp_path: Path, outcome: str) -> Non
     try:
         source = SoulseekSource(
             http,
-            "http://test",
+            "https://test",
             "fixture",
             download,
             stall_timeout_s=2,

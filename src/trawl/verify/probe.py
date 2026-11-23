@@ -3,22 +3,62 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Thread
+from typing import BinaryIO
 
 from trawl.mb.models import array_value, object_value
 
 LOSSLESS = frozenset({"flac", "alac", "ape", "wavpack"})
+_OUTPUT_LIMIT = 1024 * 1024
 
 
 class AudioError(Exception):
     pass
 
 
-def command(binary: str, *args: str) -> subprocess.CompletedProcess[str]:
+def command(
+    binary: str, *args: str, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
     if not (executable := shutil.which(binary)):
         raise AudioError(f"{binary} not found on PATH")
-    return subprocess.run(  # noqa: S603
-        [executable, *args], capture_output=True, encoding="utf-8", errors="replace", check=False
-    )
+    seconds = timeout if timeout is not None else (600 if binary in {"ffmpeg", "rsgain"} else 60)
+    with subprocess.Popen(  # noqa: S603
+        [executable, *args],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as child:
+        if child.stdout is None or child.stderr is None:
+            child.kill()
+            raise AudioError(f"{binary} could not capture output")
+        output, errors = bytearray(), bytearray()
+
+        def drain(pipe: BinaryIO, captured: bytearray) -> None:
+            while chunk := pipe.read(65536):
+                left = _OUTPUT_LIMIT + 1 - len(captured)
+                if left:
+                    captured.extend(chunk[:left])
+
+        readers = (
+            Thread(target=drain, args=(child.stdout, output)),
+            Thread(target=drain, args=(child.stderr, errors)),
+        )
+        for reader in readers:
+            reader.start()
+        try:
+            status = child.wait(timeout=seconds)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+            raise AudioError(f"{binary} timed out after {seconds:g}s") from None
+        finally:
+            for reader in readers:
+                reader.join()
+        if len(output) > _OUTPUT_LIMIT or len(errors) > _OUTPUT_LIMIT:
+            raise AudioError(f"{binary} output exceeds capture limit")
+        return subprocess.CompletedProcess(
+            child.args, status, output.decode("utf-8", "replace"), errors.decode("utf-8", "replace")
+        )
 
 
 @dataclass(frozen=True)
@@ -44,7 +84,7 @@ def probe(path: Path) -> Probe:
         str(path),
     )
     if result.returncode or result.stderr.strip():
-        raise AudioError(result.stderr.strip() or "ffprobe failed")
+        raise AudioError("ffprobe failed to read the audio file")
     try:
         data = object_value(json.loads(result.stdout))
         audio = next(
@@ -65,7 +105,7 @@ def probe(path: Path) -> Probe:
             int(str(bits)) if str(bits).isdigit() and int(str(bits)) else None,
             sample_fmt if isinstance(sample_fmt, str) else None,
         )
-    except (KeyError, ValueError, StopIteration, OverflowError) as exc:
+    except (KeyError, ValueError, StopIteration, OverflowError, RecursionError) as exc:
         raise AudioError("ffprobe did not report a readable audio stream") from exc
 
 

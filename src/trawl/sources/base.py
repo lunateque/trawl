@@ -14,6 +14,7 @@ class CandidateItem:
     disc: int | None = None
     aliases: tuple[str, ...] = ()
     size: int | None = None
+    expected_length_ms: int | None = None
 
 
 @dataclass(frozen=True)

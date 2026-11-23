@@ -5,8 +5,13 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
+
+
+def mbid(label: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"trawl-tests:{label}"))
 
 
 @pytest.fixture(autouse=True)

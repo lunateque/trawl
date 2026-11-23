@@ -34,7 +34,7 @@ def _gain(paths: Sequence[Path], *, album: bool) -> None:
         *(str(p.absolute()) for p in paths),
     )
     if result.returncode or "error" in result.stderr.casefold():
-        raise AudioError(result.stderr.strip() or "ReplayGain scan failed")
+        raise AudioError("ReplayGain scan failed")
 
 
 def track_gain(path: Path) -> None:

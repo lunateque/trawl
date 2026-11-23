@@ -9,6 +9,7 @@ from xml.etree.ElementTree import fromstring
 
 import httpx
 import pytest
+from conftest import mbid
 
 from trawl.db.connect import open_db
 from trawl.mb.client import MusicBrainzClient
@@ -91,7 +92,12 @@ async def test_watch_shutdown_completes_active_job(tmp_path: Path) -> None:
 
 
 def group(identifier: str, date: str, kind: str = "Album") -> JsonObject:
-    return {"id": identifier, "title": identifier, "first-release-date": date, "primary-type": kind}
+    return {
+        "id": mbid(identifier),
+        "title": identifier,
+        "first-release-date": date,
+        "primary-type": kind,
+    }
 
 
 async def test_releases_first_window_type_cursor_and_manual_unfollow(tmp_path: Path) -> None:
@@ -123,8 +129,8 @@ async def test_releases_first_window_type_cursor_and_manual_unfollow(tmp_path: P
                 save_artist(conn, muted, followed=True)
             assert (await sync_releases(conn, mb, ("album", "ep"), now=now)).wants == 2
             assert {tuple(row) for row in conn.execute("SELECT mbid,origin FROM wants")} == {
-                ("new", "releases"),
-                ("ep", "releases"),
+                (mbid("new"), "releases"),
+                (mbid("ep"), "releases"),
             }
             assert (
                 conn.execute(
@@ -135,10 +141,9 @@ async def test_releases_first_window_type_cursor_and_manual_unfollow(tmp_path: P
             groups.extend((group("next", "2026-06-02"), group("not-after-cursor", "2026-06-01")))
             tomorrow = now + timedelta(days=1)
             assert (await sync_releases(conn, mb, ("album", "ep"), now=tomorrow)).wants == 1
-            assert (
-                conn.execute("SELECT mbid FROM wants ORDER BY id DESC LIMIT 1").fetchone()[0]
-                == "next"
-            )
+            assert conn.execute("SELECT mbid FROM wants ORDER BY id DESC LIMIT 1").fetchone()[
+                0
+            ] == mbid("next")
             assert not mb.refresh
     finally:
         await http.aclose()

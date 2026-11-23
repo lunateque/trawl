@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from trawl.mb.models import array_value, object_value
+from trawl.mb.models import MbDataError, array_value, object_value, parse_mbid
 from trawl.net.client import HttpClient, HttpError
 from trawl.verify.probe import AudioError, command
 
@@ -20,7 +20,7 @@ def fingerprint(path: Path) -> tuple[int, str]:
         duration, fp = body["duration"], body["fingerprint"]
         if isinstance(duration, int | float) and isinstance(fp, str) and fp:
             return round(duration), fp
-    except (KeyError, ValueError, OverflowError):
+    except (KeyError, ValueError, OverflowError, RecursionError):
         pass
     raise AudioError("fpcalc did not produce a fingerprint")
 
@@ -42,6 +42,7 @@ class AcoustId:
                     "fingerprint": fp,
                     "meta": "recordingids",
                 },
+                follow_redirects=False,
             )
         )
         if body.get("status") != "ok":
@@ -50,12 +51,16 @@ class AcoustId:
         for item in array_value(body.get("results")):
             result = object_value(item)
             score = result.get("score")
-            if not isinstance(score, int | float) or isinstance(score, bool):
+            if not isinstance(score, int | float) or isinstance(score, bool) or not 0 <= score <= 1:
                 raise HttpError(self.URL, 200, "invalid AcoustID result score")
-            ids = tuple(
-                mbid
-                for raw in array_value(result.get("recordings"))
-                if isinstance(mbid := object_value(raw).get("id"), str)
-            )
+            try:
+                ids = tuple(
+                    parse_mbid(object_value(raw).get("id"))
+                    for raw in array_value(result.get("recordings"))
+                )
+            except MbDataError as exc:
+                raise HttpError(
+                    self.URL, 200, "invalid recording UUID", kind=type(exc).__name__
+                ) from None
             results.append(AcoustResult(float(score), ids))
         return results

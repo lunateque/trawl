@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import mbid
 from yandex_music import Client, JSONType, Track, TracksList  # pyright: ignore[reportMissingTypeStubs]
 
 from trawl.config import Config, ListenBrainzConfig, MbConfig, PlanConfig
@@ -43,11 +44,11 @@ def recording(
     identifier: str, length: int | None, score: int = 100, artist: str = "Artist"
 ) -> JsonObject:
     return {
-        "id": identifier,
+        "id": mbid(identifier),
         "title": "Song",
         "length": length,
         "score": score,
-        "artist-credit": [{"artist": {"id": "artist-id", "name": artist}}],
+        "artist-credit": [{"artist": {"id": mbid("artist-id"), "name": artist}}],
     }
 
 
@@ -90,7 +91,7 @@ async def test_recording_resolution(
     finally:
         await http.aclose()
     if expected:
-        assert result == Resolved(expected)
+        assert result == Resolved(mbid(expected))
     else:
         assert isinstance(result, Unresolved)
 
@@ -104,9 +105,13 @@ async def test_barcode_before_album_name(db: sqlite3.Connection) -> None:
             json={
                 "releases": [
                     {
-                        "id": "rel",
+                        "id": mbid("rel"),
                         "title": "Album",
-                        "release-group": {"id": "grp", "title": "Album", "primary-type": "Album"},
+                        "release-group": {
+                            "id": mbid("grp"),
+                            "title": "Album",
+                            "primary-type": "Album",
+                        },
                     }
                 ]
             },
@@ -116,7 +121,7 @@ async def test_barcode_before_album_name(db: sqlite3.Connection) -> None:
     try:
         assert await resolve_album(
             MusicBrainzClient(http, db, 30), "Wrong", "Wrong", "123"
-        ) == Resolved("grp", Kind.RELEASE_GROUP)
+        ) == Resolved(mbid("grp"), Kind.RELEASE_GROUP)
     finally:
         await http.aclose()
 
@@ -347,11 +352,11 @@ async def test_album_scope_uses_canonical_group_only_for_likes(
 ) -> None:
     def release(identifier: str, kind: str, year: str) -> JsonObject:
         return {
-            "id": f"release-{identifier}",
+            "id": mbid(f"release-{identifier}"),
             "title": identifier,
             "status": "Official",
             "release-group": {
-                "id": identifier,
+                "id": mbid(identifier),
                 "title": identifier,
                 "primary-type": kind,
                 "first-release-date": year,
@@ -390,7 +395,7 @@ async def test_album_scope_uses_canonical_group_only_for_likes(
         assert [
             tuple(row) for row in db.execute("SELECT kind,scope,mbid FROM wants ORDER BY id")
         ] == [
-            (Kind.RELEASE_GROUP, Scope.ALBUM, "canonical"),
+            (Kind.RELEASE_GROUP, Scope.ALBUM, mbid("canonical")),
             (Kind.RECORDING, Scope.TRACK, "recording"),
             (Kind.RECORDING, Scope.TRACK, "recording"),
         ]

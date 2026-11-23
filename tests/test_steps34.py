@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 
 import httpx
 import pytest
+from conftest import mbid
 from mutagen.flac import FLAC  # pyright: ignore[reportMissingTypeStubs]
 from typer.testing import CliRunner
 
@@ -24,8 +25,8 @@ TITLES = ("First Song", "Second Song", "Third Song")
 def _release(lengths: tuple[int, ...], discs: int) -> dict[str, object]:
     tracks = [
         {
-            "id": f"track-{i}",
-            "recording": {"id": f"rec-{i}"},
+            "id": mbid(f"track-{i}"),
+            "recording": {"id": mbid(f"rec-{i}")},
             "title": TITLES[i - 1],
             "number": str(i if discs == 1 else 1),
             "position": i if discs == 1 else 1,
@@ -39,7 +40,9 @@ def _release(lengths: tuple[int, ...], discs: int) -> dict[str, object]:
         "status": "Official",
         "country": "XW",
         "date": "2001",
-        "artist-credit": [{"name": "The Band", "artist": {"name": "The Band", "id": "artist"}}],
+        "artist-credit": [
+            {"name": "The Band", "artist": {"name": "The Band", "id": mbid("artist")}}
+        ],
         "release-group": {
             "id": GROUP,
             "title": "The Album",
@@ -85,7 +88,7 @@ def _config(root: Path, sources: str) -> Path:
         encoding="utf-8",
     )
     path.with_name("secrets.toml").write_text(
-        'acoustid_key="fixture"\nslskd_url="http://slskd.test"\nslskd_api_key="fixture"\n',
+        'acoustid_key="fixture"\nslskd_url="https://slskd.test"\nslskd_api_key="fixture"\n',
         encoding="utf-8",
     )
     return path
@@ -264,7 +267,8 @@ def test_slskd_two_disc_album_and_cli_upgrade(
             assert probe(path).codec == "flac"
             tags = FLAC(path)
             assert tags["discnumber"] == [str(disc)] and tags["tracknumber"] == ["1"]
-            assert tags["musicbrainz_trackid"] == [f"rec-{disc}"] and tags["replaygain_album_gain"]
+            assert tags["musicbrainz_trackid"] == [mbid(f"rec-{disc}")]
+            assert tags["replaygain_album_gain"]
         assert not list((tmp_path / "library").rglob("*.log"))
 
 
@@ -296,7 +300,7 @@ def test_cli_import_fingerprints_three_unrelated_filenames(
                     "results": [
                         {
                             "score": 0.99,
-                            "recordings": [{"id": f"rec-{lengths.index(duration) + 1}"}],
+                            "recordings": [{"id": mbid(f"rec-{lengths.index(duration) + 1}")}],
                         }
                     ],
                 },
@@ -305,7 +309,9 @@ def test_cli_import_fingerprints_three_unrelated_filenames(
             return httpx.Response(200, json=release)
         if path.startswith("/ws/2/recording/"):
             return httpx.Response(200, json={"id": path.rsplit("/", 1)[-1], "title": "Identified"})
-        assert path == "/ws/2/release" and request.url.params["recording"].startswith("rec-")
+        assert path == "/ws/2/release" and request.url.params["recording"] in {
+            mbid(f"rec-{i}") for i in range(1, len(lengths) + 1)
+        }
         return httpx.Response(200, json={"releases": [release], "release-count": 1})
 
     _install_transport(monkeypatch, handle)
@@ -323,5 +329,7 @@ def test_cli_import_fingerprints_three_unrelated_filenames(
         )
         assert len(rows) == 3
         for i, (raw, verified) in enumerate(rows, 1):
-            assert verified == "acoustid" and FLAC(Path(raw))["musicbrainz_trackid"] == [f"rec-{i}"]
+            assert verified == "acoustid" and FLAC(Path(raw))["musicbrainz_trackid"] == [
+                mbid(f"rec-{i}")
+            ]
     assert len(list(folder.glob("*.flac"))) == 3

@@ -31,6 +31,7 @@ download_dir = "" # required when soulseek is in order
 concurrency = 3
 search_timeout_s = 30
 stall_timeout_s = 600
+candidate_timeout_s = 3600
 
 [sources.local]
 inbox = []
@@ -109,6 +110,7 @@ older_than_days = 14
 # youtube_cookies = "cookies.txt" # optional
 # slskd_url = "http://localhost:5030"
 # slskd_api_key = "your slskd API key"
+# slskd_allow_insecure = false # Prefer HTTPS for remote hosts; true sends the API key in plaintext.
 # listenbrainz_token = "optional ListenBrainz token"
 # yandex_token = "Yandex Music token"
 # spotify_client_id = "Spotify application client ID"

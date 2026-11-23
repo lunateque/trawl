@@ -312,6 +312,8 @@ async def _run_deps(
                         concurrency=slskd.concurrency,
                         search_timeout_s=slskd.search_timeout_s,
                         stall_timeout_s=slskd.stall_timeout_s,
+                        candidate_timeout_s=slskd.candidate_timeout_s,
+                        allow_insecure=secrets.slskd_allow_insecure,
                         lossless_repack=cfg.sources.lossless_repack,
                     )
                 )

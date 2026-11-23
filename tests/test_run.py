@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import mbid
 from mutagen.flac import FLAC  # pyright: ignore[reportMissingTypeStubs]
 from ytmusicapi import YTMusic  # pyright: ignore[reportMissingTypeStubs]
 
@@ -33,7 +34,7 @@ async def test_plan_to_library_reuse_and_rejection(
     cfg = Config(tmp_path / "library", tmp_path / "data", "a@b", MbConfig(), PlanConfig(), None)
     credit = Credit("The Band", "artist", "")
     tracks = tuple(
-        Track(f"track-{i}", f"recording-{i}", i, str(i), f"Song {i}", 31_000, (credit,), ())
+        Track(f"track-{i}", mbid(f"recording-{i}"), i, str(i), f"Song {i}", 31_000, (credit,), ())
         for i in range(1, 4)
     )
     group = ReleaseGroupRef("group", "Album", "Album", (), "2001-01-15")
@@ -96,7 +97,9 @@ async def test_plan_to_library_reuse_and_rejection(
             return httpx.Response(
                 200, json={"plainLyrics": "Hello", "syncedLyrics": "[00:01.00]Hello"}
             )
-        assert request.url.path in {"/ws/2/recording/other", "/ws/2/recording/expected"}
+        assert request.url.path in {
+            f"/ws/2/recording/{mbid(label)}" for label in ("other", "expected")
+        }
         return httpx.Response(
             200, json={"id": request.url.path.rsplit("/", 1)[-1], "title": "Recording"}
         )
@@ -137,7 +140,7 @@ async def test_plan_to_library_reuse_and_rejection(
             for i in range(1, 4):
                 file = folder / f"{i:02} - Song {i}.flac"
                 tags = FLAC(file)
-                assert tags["musicbrainz_trackid"] == [f"recording-{i}"]
+                assert tags["musicbrainz_trackid"] == [mbid(f"recording-{i}")]
                 assert tags["lyrics"] == ["Hello"]
                 assert tags.pictures[0].data == jpeg  # pyright: ignore[reportUnknownMemberType]
                 assert tags["replaygain_track_gain"] and tags["replaygain_album_gain"]
@@ -167,8 +170,8 @@ async def test_plan_to_library_reuse_and_rejection(
             assert FLAC(Path(with_reuse[2]))["album"] == ["Compilation"]
             assert FLAC(folder / "01 - Song 1.flac")["album"] == ["Album"]
 
-            await plan(edition("Mismatch", "expected"))
-            expected_recordings.append("other")
+            await plan(edition("Mismatch", mbid("expected")))
+            expected_recordings.append(mbid("other"))
             await run_once(conn, cfg, Secrets("fixture"), deps)
             assert repo.status(conn).tracks == [("done", 4), ("missing", 1)]
             assert (
@@ -185,10 +188,10 @@ async def test_plan_to_library_reuse_and_rejection(
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
                 assert queue.pin(conn, mismatch_id, choice.source, choice.ref)
-            expected_recordings.append("other")
+            expected_recordings.append(mbid("other"))
             await run_once(conn, cfg, Secrets("fixture"), deps, only=mismatch_id)
             rejected = review.rejection(conn, mismatch_id, cfg.library_root)
-            assert rejected and "other" in rejected.comparison and rejected.path.is_file()
+            assert rejected and mbid("other") in rejected.comparison and rejected.path.is_file()
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
                 assert review.accept(conn, mismatch_id, rejected, cfg.library_root)

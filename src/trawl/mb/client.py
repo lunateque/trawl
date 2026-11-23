@@ -8,6 +8,7 @@ import httpx
 from trawl.mb.models import (
     ArtistRef,
     Credit,
+    InvalidMbidError,
     JsonObject,
     RecordingRef,
     Release,
@@ -24,6 +25,13 @@ from trawl.net.client import HttpClient
 def _phrase(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _valid_mbid[T](parse: Callable[[JsonObject], T], item: JsonObject) -> T | None:
+    try:
+        return parse(item)
+    except InvalidMbidError:
+        return None
 
 
 class MusicBrainzClient:
@@ -92,12 +100,13 @@ class MusicBrainzClient:
 
     async def release_group_releases(self, rg_mbid: str) -> list[Release]:
         return [
-            Release.from_json(item)
+            parsed
             async for item in self._browse(
                 "release",
                 **{"release-group": rg_mbid},
                 inc="media+recordings+artist-credits+release-groups",
             )
+            if (parsed := _valid_mbid(Release.from_json, item)) is not None
         ]
 
     async def recording(self, mbid: str) -> RecordingRef:
@@ -108,8 +117,9 @@ class MusicBrainzClient:
 
     async def recording_releases(self, mbid: str) -> list[ReleaseRef]:
         return [
-            ReleaseRef.from_json(item)
+            parsed
             async for item in self._browse("release", recording=mbid, inc="release-groups")
+            if (parsed := _valid_mbid(ReleaseRef.from_json, item)) is not None
         ]
 
     async def search_recordings(
@@ -127,18 +137,16 @@ class MusicBrainzClient:
             row = object_value(item)
             score = row.get("score")
             # Indexed recording results do not include complete release groups.
-            results.append(
-                (
-                    RecordingRef.from_json({**row, "releases": []}),
-                    score if isinstance(score, int) else 0,
-                )
-            )
+            if parsed := _valid_mbid(RecordingRef.from_json, {**row, "releases": []}):
+                results.append((parsed, score if isinstance(score, int) else 0))
         return results
 
     async def search_barcode(self, upc: str) -> list[ReleaseRef]:
         data = await self._get("release", query=f"barcode:{_phrase(upc)}", limit="25")
         return [
-            ReleaseRef.from_json(object_value(item)) for item in array_value(data.get("releases"))
+            parsed
+            for item in array_value(data.get("releases"))
+            if (parsed := _valid_mbid(ReleaseRef.from_json, object_value(item))) is not None
         ]
 
     async def artist_release_groups(
@@ -149,16 +157,19 @@ class MusicBrainzClient:
         if not types:
             return []
         return [
-            ReleaseGroupRef.from_json(item)
+            parsed
             async for item in self._browse(
                 "release-group", artist=artist_mbid, type="|".join(types)
             )
+            if (parsed := _valid_mbid(ReleaseGroupRef.from_json, item)) is not None
         ]
 
     async def search_artists(self, query: str) -> list[ArtistRef]:
         data = await self._get("artist", query=f"artist:{_phrase(query)}", limit="8")
         return [
-            ArtistRef.from_json(object_value(item)) for item in array_value(data.get("artists"))
+            parsed
+            for item in array_value(data.get("artists"))
+            if (parsed := _valid_mbid(ArtistRef.from_json, object_value(item))) is not None
         ]
 
     async def search_release_groups(
@@ -173,11 +184,10 @@ class MusicBrainzClient:
             group = object_value(item)
             credits = array_value(group.get("artist-credit"))
             score = group.get("score")
-            results.append(
-                (
-                    ReleaseGroupRef.from_json(group),
-                    score if isinstance(score, int) else 0,
-                    credit_string(Credit.from_json(object_value(credit)) for credit in credits),
-                )
-            )
+            try:
+                parsed = ReleaseGroupRef.from_json(group)
+                names = credit_string(Credit.from_json(object_value(credit)) for credit in credits)
+            except InvalidMbidError:
+                continue
+            results.append((parsed, score if isinstance(score, int) else 0, names))
         return results

@@ -131,10 +131,12 @@ def test_invalid_foreign_link_is_rejected_without_configuration() -> None:
 
 
 def test_doctor_offline(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def missing(_: str) -> None:
-        return None
+    def missing(name: str, _flag: str, *, timeout: float) -> None:
+        assert timeout == 5
+        raise FileNotFoundError(name)
 
-    monkeypatch.setattr("trawl.doctor.shutil.which", missing)
+    monkeypatch.setattr("trawl.doctor.command", missing)
+    monkeypatch.setattr("trawl.doctor.supports_opus", lambda: False)
     result = CliRunner().invoke(cli.app, ["--config", str(config), "doctor", "--offline"])
     assert result.exit_code == 1, result.output
     assert all(

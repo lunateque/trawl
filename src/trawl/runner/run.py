@@ -15,7 +15,7 @@ from trawl.db.queue import Work
 from trawl.db.states import Actor, transition
 from trawl.db.states import TrackState as State
 from trawl.library.layout import render, resolve_collision
-from trawl.library.place import cleanup_staging, place, staging_dir
+from trawl.library.place import cleanup_staging, place, staging_dir, write_atomic
 from trawl.library.repack import repack_needed
 from trawl.mb.client import MusicBrainzClient
 from trawl.mb.models import MbDataError, Release, Track
@@ -453,6 +453,7 @@ class _Runner:
                     track.length_ms,
                     track.title,
                     size=pin.size,
+                    expected_length_ms=track.length_ms,
                 ),
             ),
         )
@@ -737,10 +738,10 @@ class _Runner:
                 cover = staged.parent / "cover.jpg"
                 cover_target = final.parent / "cover.jpg"
                 if cover.is_file() and not cover_target.exists():
-                    shutil.copyfile(cover, cover_target)
+                    write_atomic(cover_target, cover.read_bytes())
                 lrc = staged.with_suffix(".lrc")
                 if lrc.is_file():
-                    shutil.copyfile(lrc, final.with_suffix(".lrc"))
+                    write_atomic(final.with_suffix(".lrc"), lrc.read_bytes())
                 success = place(staged, final)
             except PermissionError:
                 success = False

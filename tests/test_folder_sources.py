@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 import pytest
+from conftest import mbid
 
 from trawl.library.repack import repack
 from trawl.mb.client import MusicBrainzClient
@@ -32,7 +33,7 @@ def album() -> Release:
         Medium(
             disc,
             "CD",
-            (Track(f"track-{disc}", f"rec-{disc}", 1, "1", title, 4000, (CREDIT,), ()),),
+            (Track(f"track-{disc}", mbid(f"rec-{disc}"), 1, "1", title, 4000, (CREDIT,), ()),),
             None,
             (),
         )
@@ -176,7 +177,7 @@ async def test_fingerprints_override_folder_order_and_guard_duration(mode: str) 
         result: list[dict[str, object]] = []
         if mode == "swap":
             rec = "rec-2" if b"fingerprint=track-1" in req.content else "rec-1"
-            result = [{"score": 0.99, "recordings": [{"id": rec}]}]
+            result = [{"score": 0.99, "recordings": [{"id": mbid(rec)}]}]
         return httpx.Response(200, json={"status": "ok", "results": result})
 
     with closing(sqlite3.connect(":memory:")) as conn:

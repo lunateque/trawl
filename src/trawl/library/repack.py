@@ -40,7 +40,7 @@ def _require_lossless(src: Path, audio: Probe) -> None:
 def _ffmpeg(src: Path, *args: str) -> str:
     result = command("ffmpeg", "-v", "error", "-nostdin", "-i", str(src), "-map", "0:a:0", *args)
     if result.returncode or result.stderr:
-        raise AudioError(result.stderr.strip() or "ffmpeg repack failed")
+        raise AudioError("ffmpeg repack failed")
     return result.stdout.strip()
 
 

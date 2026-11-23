@@ -1,13 +1,18 @@
-import shutil
 import sqlite3
-import subprocess
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Literal
 
-from trawl.config import Config, ConfigError, load, load_secrets
+from trawl.config import (
+    Config,
+    ConfigError,
+    load,
+    load_secrets,
+    secrets_permissions_warning,
+    slskd_insecure,
+)
 from trawl.db.connect import open_db
 from trawl.library.place import staging_dir
 from trawl.mb.client import MusicBrainzClient
@@ -17,7 +22,7 @@ from trawl.sources.base import FetchError, SourceWall
 from trawl.sources.soulseek import SoulseekSource
 from trawl.tag.replaygain import supports_opus
 from trawl.taste.sync import ERRORS, check_source, enabled_sources, read_secrets, taste_http
-from trawl.verify.probe import AudioError
+from trawl.verify.probe import AudioError, command
 
 
 @dataclass(frozen=True)
@@ -47,21 +52,12 @@ def _database(path: Path) -> Check:
 
 
 def _binary(name: str, flag: str) -> Check:
-    executable = shutil.which(name)
-    if executable is None:
-        return Check(name, "FAIL", "not found on PATH")
     try:
-        # Executables and arguments are selected from a fixed list, not configuration.
-        result = subprocess.run(  # noqa: S603
-            [executable, flag],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=5,
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+        result = command(name, flag, timeout=5)
+    except (AudioError, OSError) as exc:
         return Check(name, "FAIL", str(exc))
+    if result.returncode:
+        return Check(name, "FAIL", f"version command exited with status {result.returncode}")
     lines = (result.stdout.strip() or result.stderr.strip()).splitlines()
     if not lines:
         return Check(name, "FAIL", "version command returned no output")
@@ -127,15 +123,27 @@ async def _slskd(config: Path, download: Path, offline: bool) -> Check:
         return Check("slskd", "FAIL", str(exc))
     if not secrets.slskd_api_key:
         return Check("slskd", "FAIL", "configure slskd_api_key in secrets.toml")
+    insecure = slskd_insecure(secrets.slskd_url)
+    warning = "slskd_allow_insecure permits a plaintext API key to a non-loopback host"
     if offline:
-        return Check("slskd", "SKIPPED", "offline")
+        return (
+            Check("slskd", "WARNING", warning) if insecure else Check("slskd", "SKIPPED", "offline")
+        )
     http = HttpClient("trawl doctor", {}, max_attempts=1)
     try:
-        await SoulseekSource(http, secrets.slskd_url, secrets.slskd_api_key, download).check()
+        await SoulseekSource(
+            http,
+            secrets.slskd_url,
+            secrets.slskd_api_key,
+            download,
+            allow_insecure=secrets.slskd_allow_insecure,
+        ).check()
     except (FetchError, SourceWall) as exc:
         return Check("slskd", "FAIL", str(exc))
     finally:
         await http.aclose()
+    if insecure:
+        return Check("slskd", "WARNING", f"reachable and authorized; {warning}")
     return Check("slskd", "OK", "reachable and authorized")
 
 
@@ -162,6 +170,11 @@ async def check(config: Path, offline: bool) -> list[Check]:
         _secrets(config),
         _staging(cfg.library_root),
     ]
+    try:
+        if warning := secrets_permissions_warning(config):
+            checks.append(Check("Secrets permissions", "WARNING", warning))
+    except OSError:
+        pass  # Loading secrets above already reports an inaccessible file.
     checks.append(
         Check("MusicBrainz", "SKIPPED", "offline") if offline else await _musicbrainz(cfg)
     )

@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from trawl.config import Config
 from trawl.db import queue
 from trawl.db.states import Actor, TrackState, transition
-from trawl.library.place import place, staging_dir
+from trawl.library.place import linked_ancestor, place, staging_dir, unlink_regular
 from trawl.mb.models import MbDataError, Release
 from trawl.net.client import HttpError
 from trawl.runner.check import check_folder
@@ -45,7 +45,10 @@ def _replace_audio(
     conn: sqlite3.Connection, track: _LibraryTrack, staged: Path, final: Path, **fields: object
 ) -> None:
     old = track.path
-    if final != old and (final.exists() or final.is_symlink()):
+    if linked := linked_ancestor(old):
+        log.warning("Skipping linked path %s", linked)
+        raise OSError("Upgrade original is a symlink or junction")
+    if final != old and (linked_ancestor(final) or final.exists()):
         raise OSError(f"Upgrade destination already exists: {final}")
     backup = staged.with_suffix(".original")
     installed = False
@@ -85,7 +88,7 @@ def _replace_audio(
             if saved:
                 backup.replace(old)
             if final != old:
-                final.unlink()
+                unlink_regular(final)
         raise
 
 
@@ -218,7 +221,7 @@ async def _upgrade_release(
                                 if lrc.is_file():
                                     place(lrc, final.with_suffix(".lrc"))
                                 if isinstance(source, LocalSource) and source.move:
-                                    await asyncio.to_thread(Path(file.item_ref).unlink)
+                                    await asyncio.to_thread(unlink_regular, Path(file.item_ref))
                             except OSError as exc:
                                 log.warning(
                                     "Cannot finish upgrade side files for %s: %s", final, exc

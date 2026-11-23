@@ -240,7 +240,7 @@ async def test_partial_download_preserves_success_before_wall(
             if video_id == "missing":
                 raise FetchError("video unavailable")
             if video_id == "wall":
-                raise FetchError("HTTP Error 429")
+                raise FetchError("HTTP Error 429: https://private.test/?token=do-not-print")
             assert video_id == "ok"
             target = into / "audio.flac"
             shutil.copyfile(audio_file, target)
@@ -267,5 +267,7 @@ async def test_partial_download_preserves_success_before_wall(
     with pytest.raises(PartialFetchError) as exc:
         await source.fetch(candidate, tmp_path / "stage")
     assert [file.item_ref for file in exc.value.files] == ["ok"]
-    assert exc.value.issues["missing"].reason == "video unavailable"
+    assert "FetchError" in exc.value.issues["missing"].reason
     assert exc.value.wall is not None and "429" in exc.value.wall.reason
+    assert "https://www.youtube.com/watch" in exc.value.wall.reason
+    assert "do-not-print" not in exc.value.wall.reason

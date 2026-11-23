@@ -28,7 +28,7 @@ from trawl.sources.base import (
     SourceWall,
 )
 from trawl.sources.score import match_items, release_tracks, within_duration
-from trawl.verify.probe import LOSSLESS, AudioError, probe
+from trawl.verify.probe import LOSSLESS, AudioError, command, probe
 
 _WALL = re.compile(
     r"\bHTTP(?: Error| status(?: code)?)?[: ]+(?:403|429)\b"
@@ -36,10 +36,20 @@ _WALL = re.compile(
     re.I,
 )
 _VIDEO = re.compile(r"[A-Za-z0-9_-]{11}")
+_STATUS = re.compile(r"\b(?:HTTP(?: Error| status(?: code)?)?[: ]+(\d{3})|(\d{3}) Client Error)\b")
+_SEARCH_URL = "https://music.youtube.com/youtubei/v1/search"
+_VIDEO_URL = "https://www.youtube.com/watch"
 
 
 def is_wall(exc: Exception) -> bool:
     return _WALL.search(str(exc)) is not None
+
+
+def _diagnostic(exc: Exception, url: str) -> str:
+    match = _STATUS.search(str(exc))
+    status = f" HTTP {match[1] or match[2]}" if match else ""
+    reason = " (sign-in or rate limit required)" if is_wall(exc) else ""
+    return f"YouTube Music{status} {type(exc).__name__} at {url}{reason}"
 
 
 def video_id(url: str) -> str:
@@ -64,10 +74,37 @@ class Downloader(Protocol):
 
 
 class CopyAudio(FFmpegExtractAudioPP):
+    def get_audio_codec(self, path: str) -> str:
+        return probe(Path(path)).codec
+
     def run_ffmpeg(self, path: str, out_path: str, codec: str, more_opts: list[str]) -> None:
         if codec != "copy":
             raise PostProcessingError("audio cannot be extracted without re-encoding")
-        super().run_ffmpeg(path, out_path, codec, more_opts)  # pyright: ignore[reportUnknownMemberType]
+        result = command(
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            path,
+            "-vn",
+            "-c:a",
+            codec,
+            *more_opts,
+            out_path,
+        )
+        if result.returncode:
+            raise AudioError("ffmpeg could not extract audio")
+
+
+class _QuietDownloaderLog:
+    def debug(self, _: str) -> None:
+        pass
+
+    info = warning = error = debug
 
 
 class YtDlpDownloader:
@@ -82,13 +119,14 @@ class YtDlpDownloader:
             "quiet": True,
             "no_warnings": True,
             "cachedir": False,
+            "logger": _QuietDownloaderLog(),
         }
         if self._cookies is not None:
             options["cookiefile"] = str(self._cookies)
         with YoutubeDL(options) as ydl:  # pyright: ignore[reportUnknownVariableType]
             processor = CopyAudio(ydl, preferredcodec="best")
             ydl.add_post_processor(processor)  # pyright: ignore[reportUnknownMemberType,reportArgumentType]
-            result: object = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}")  # pyright: ignore[reportUnknownMemberType]
+            result: object = ydl.extract_info(f"{_VIDEO_URL}?v={video_id}")  # pyright: ignore[reportUnknownMemberType]
         data = object_value(result)
         if "requested_downloads" in data:
             downloads = array_value(data["requested_downloads"])
@@ -145,10 +183,11 @@ class YTMusicSource:
     async def search(self, release: Release, tracks: list[Track]) -> list[Candidate]:
         try:
             return await asyncio.to_thread(self._search, release, tracks)
-        except (YTMusicError, OSError, ValueError) as exc:
+        except (YTMusicError, OSError, ValueError, RecursionError) as exc:
+            reason = _diagnostic(exc, _SEARCH_URL)
             if is_wall(exc):
-                raise SourceWall(str(exc)) from exc
-            raise FetchError(str(exc)) from exc
+                raise SourceWall(reason) from None
+            raise FetchError(reason) from None
 
     def _search(self, release: Release, tracks: list[Track]) -> list[Candidate]:
         all_tracks = release_tracks(release)
@@ -217,11 +256,14 @@ class YTMusicSource:
                 target.mkdir(parents=True, exist_ok=True)
                 path = self._downloader.download(item.ref, target)
                 info = probe(path)
-            except (DownloadError, ExtractorError, FetchError, AudioError, OSError) as exc:
+            except (DownloadError, ExtractorError, PostProcessingError, FetchError, OSError) as exc:
+                reason = _diagnostic(exc, _VIDEO_URL)
                 if is_wall(exc):
-                    wall = SourceWall(str(exc))
+                    wall = SourceWall(reason)
                     break
-                issues[item.ref] = FetchIssue(str(exc), isinstance(exc, AudioError))
+                issues[item.ref] = FetchIssue(reason)
+            except AudioError as exc:
+                issues[item.ref] = FetchIssue(str(exc), True)
             else:
                 files.append(
                     Fetched(item.ref, path, info.codec, info.bitrate, info.codec in LOSSLESS)

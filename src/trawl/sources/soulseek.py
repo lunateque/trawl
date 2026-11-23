@@ -3,15 +3,19 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from tempfile import TemporaryDirectory
 from time import monotonic
 from typing import cast
 from urllib.parse import quote
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from trawl.mb.models import JsonObject, Release, Track, array_value, credit_string, object_value
+from trawl.config import slskd_insecure
+from trawl.library.place import linked_ancestor, unlink_regular
+from trawl.mb.models import Release, Track, array_value, credit_string, object_value
 from trawl.net.client import HttpClient, HttpError
 from trawl.sources.base import (
     Candidate,
@@ -39,6 +43,8 @@ _EDITION = re.compile(
     re.I,
 )
 _FAILED = {"errored", "rejected", "cancelled", "timedout", "timed out"}
+_MIN_FILE_LIMIT = 200_000_000
+_PCM_BYTES_PER_MS = 96_000 * 2 * 3 // 1000
 
 
 def _number(raw: object) -> int | None:
@@ -106,18 +112,19 @@ class _Transfer:
 
 
 def _transfers(raw: object) -> dict[str, _Transfer]:
-    def rows(data: object) -> list[JsonObject]:
-        if isinstance(data, list):
-            return [row for item in cast("list[object]", data) for row in rows(item)]
-        if not isinstance(data, dict):
-            return []
-        info = cast("dict[str, object]", data)
-        if "filename" in info:
-            return [info]
-        return [row for key in ("downloads", "directories", "files") for row in rows(info.get(key))]
-
     transfers: dict[str, _Transfer] = {}
-    for info in rows(raw):
+    stack = [raw]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, list):
+            stack.extend(reversed(cast("list[object]", value)))
+            continue
+        if not isinstance(value, dict):
+            continue
+        info = cast("dict[str, object]", value)
+        if "filename" not in info:
+            stack.extend(info.get(key) for key in ("files", "directories", "downloads"))
+            continue
         name, key, state = info.get("filename"), info.get("id"), info.get("state")
         if isinstance(name, str) and isinstance(key, str) and isinstance(state, str):
             transfers[name.replace("\\", "/")] = _Transfer(
@@ -137,6 +144,15 @@ def _component(value: str) -> bool:
     )
 
 
+def _abandon_stage(workspace: TemporaryDirectory[str], task: asyncio.Task[Fetched]) -> None:
+    try:
+        if not task.cancelled():
+            task.exception()
+        workspace.cleanup()
+    except OSError as exc:
+        _LOG.warning("Cannot clean up cancelled slskd staging files: %s", exc)
+
+
 class SoulseekSource:
     name = "soulseek"
 
@@ -150,16 +166,21 @@ class SoulseekSource:
         concurrency: int = 3,
         search_timeout_s: int = 30,
         stall_timeout_s: int = 600,
+        candidate_timeout_s: float = 3600,
+        allow_insecure: bool = False,
         lossless_repack: bool = True,
         clock: Callable[[], float] = monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
+        if slskd_insecure(url) and not allow_insecure:
+            raise ValueError("slskd requires HTTPS for non-loopback hosts")
         self._http, self._base, self._key = http, url.rstrip("/") + "/api/v0", key
         self._download = download_dir.resolve()
         self._limit = asyncio.Semaphore(concurrency)
         self._peers: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._paths: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._search_timeout, self._stall_timeout = search_timeout_s, stall_timeout_s
+        self._candidate_timeout = candidate_timeout_s
         self._clock, self._sleep = clock, sleep
         self._repack = lossless_repack
 
@@ -180,15 +201,12 @@ class SoulseekSource:
                 headers={"X-API-Key": self._key},
                 body=body,
                 params=params,
+                service="slskd",
             )
         except HttpError as exc:
-            if exc.status in {401, 403}:
-                raise SourceWall(f"slskd authorization failed (HTTP {exc.status})") from exc
-            if exc.status is None or exc.status == 429 or exc.status >= 500:
-                raise SourceWall(
-                    "slskd is unavailable" if exc.status is None else f"slskd HTTP {exc.status}"
-                ) from exc
-            raise FetchError(f"slskd {method} {endpoint}: HTTP {exc.status}") from exc
+            if exc.status is None or exc.status in {401, 403, 429} or exc.status >= 500:
+                raise SourceWall(str(exc)) from None
+            raise FetchError(str(exc)) from None
 
     async def check(self) -> None:
         await self._api("GET", "/application")
@@ -260,54 +278,99 @@ class SoulseekSource:
 
     def _path(self, remote: str, expected: int) -> Path:
         dst = self._destination(remote)
-        if (
-            not dst.resolve().is_relative_to(self._download)
-            or dst.is_symlink()
-            or dst.parent.is_symlink()
-        ):
+        if linked_ancestor(dst) or not dst.resolve().is_relative_to(self._download):
             raise FetchError("slskd file is outside the download directory")
         if not dst.is_file() or dst.stat().st_size != expected:
             raise FetchError(f"slskd completed file missing or wrong size: {dst.name}")
         return dst
 
-    def _stage(self, remote: str, size: int, into: Path, index: int) -> Fetched:
-        return stage_file(
-            remote,
-            self._path(remote, size),
-            into,
-            index,
-            move=True,
-            lossless_repack=self._repack,
+    async def _stage(self, remote: str, size: int, into: Path, index: int) -> Fetched:
+        source = self._path(remote, size)
+        await asyncio.to_thread(into.mkdir, parents=True, exist_ok=True)
+        # An executor thread cannot be cancelled mid-copy. Publish only after it succeeds.
+        workspace = TemporaryDirectory(dir=into.parent)
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                stage_file,
+                remote,
+                source,
+                Path(workspace.name),
+                index,
+                move=False,
+                lossless_repack=self._repack,
+            )
         )
+        abandoned = False
+        try:
+            file = await asyncio.shield(task)
+            final = into / file.path.name
+            file.path.replace(final)
+            unlink_regular(source)
+            return replace(file, path=final)
+        except asyncio.CancelledError:
+            abandoned = True
+            task.add_done_callback(partial(_abandon_stage, workspace))
+            raise
+        finally:
+            if not abandoned:
+                workspace.cleanup()
 
     async def fetch(self, candidate: Candidate, into: Path) -> list[Fetched]:
         names = [str(self._destination(item.ref)).casefold() for item in candidate.items]
         if len(set(names)) != len(names):
             raise FetchError("slskd candidate has colliding download paths")
-        lock = self._peers.setdefault(candidate.ref, asyncio.Lock())
-        async with lock, AsyncExitStack() as stack:
-            # slskd flattens peer paths; another peer can write to the same destination.
-            for name in sorted(names):
-                await stack.enter_async_context(self._paths.setdefault(name, asyncio.Lock()))
-            async with self._limit:
-                return await self._fetch(candidate, into)
-
-    async def _fetch(self, candidate: Candidate, into: Path) -> list[Fetched]:
         endpoint = f"/transfers/downloads/{quote(candidate.ref, safe='')}"
-        indexed = {
-            item.ref: (n, item.size)
-            for n, item in enumerate(candidate.items)
-            if item.size is not None
-        }
-        await self._api(
-            "POST",
-            endpoint,
-            body=[{"filename": name, "size": size} for name, (_, size) in indexed.items()],
-        )
+        transfers: dict[str, str] = {}
+        lock = self._peers.setdefault(candidate.ref, asyncio.Lock())
+        deadline = asyncio.timeout(self._candidate_timeout)
+        async with AsyncExitStack() as stack:
+            try:
+                async with deadline:
+                    await stack.enter_async_context(lock)
+                    # slskd flattens peer paths; another peer can write to the same destination.
+                    for name in sorted(names):
+                        await stack.enter_async_context(
+                            self._paths.setdefault(name, asyncio.Lock())
+                        )
+                    async with self._limit:
+                        return await self._fetch(candidate, into, endpoint, transfers)
+            except TimeoutError:
+                if not deadline.expired():
+                    raise
+                try:
+                    async with asyncio.timeout(2):
+                        for key in transfers.values():
+                            await self._delete(f"{endpoint}/{quote(key, safe='')}", remove=True)
+                except TimeoutError:
+                    _LOG.warning("slskd transfer cleanup timed out")
+                seconds = self._candidate_timeout
+                raise FetchError(f"slskd candidate timed out after {seconds:g}s") from None
+
+    async def _fetch(
+        self,
+        candidate: Candidate,
+        into: Path,
+        endpoint: str,
+        transfer_ids: dict[str, str],
+    ) -> list[Fetched]:
+        indexed: dict[str, tuple[int, int]] = {}
+        issues: dict[str, FetchIssue] = {}
+        for n, item in enumerate(candidate.items):
+            cap = max(_MIN_FILE_LIMIT, 3 * _PCM_BYTES_PER_MS * (item.expected_length_ms or 0))
+            if item.size is None or item.size <= 0:
+                issues[item.ref] = FetchIssue("slskd file has no valid size")
+            elif item.size > cap:
+                issues[item.ref] = FetchIssue(f"slskd file exceeds size limit ({cap} bytes)")
+            else:
+                indexed[item.ref] = (n, item.size)
+        if indexed:
+            await self._api(
+                "POST",
+                endpoint,
+                body=[{"filename": name, "size": size} for name, (_, size) in indexed.items()],
+            )
         pending = set(indexed)
         ready: list[str] = []
-        transfer_ids: dict[str, str] = {}
-        issues: dict[str, FetchIssue] = {}
         progress: dict[str, int] = {}
         moves: dict[str, float] = dict.fromkeys(indexed, self._clock())
         wall: SourceWall | None = None
@@ -326,6 +389,12 @@ class SoulseekSource:
                 transfer = active.get(name.replace("\\", "/"))
                 if transfer:
                     transfer_ids[name] = transfer.id
+                    if transfer.bytes > indexed[name][1]:
+                        pending.remove(name)
+                        issues[name] = FetchIssue("slskd transfer exceeded advertised size")
+                        await self._delete(f"{endpoint}/{quote(transfer.id, safe='')}", remove=True)
+                        del transfer_ids[name]
+                        continue
                 if transfer and "completed" in transfer.state:
                     pending.remove(name)
                     if "succeeded" in transfer.state:
@@ -343,14 +412,15 @@ class SoulseekSource:
             if stalled:
                 for transfer_id in transfer_ids.values():
                     await self._delete(f"{endpoint}/{quote(transfer_id, safe='')}", remove=True)
-                raise PartialFetchError([], dict.fromkeys(indexed, FetchIssue("stalled")), None)
+                issues.update(dict.fromkeys(indexed, FetchIssue("stalled")))
+                raise PartialFetchError([], issues, None)
             if pending:
                 await self._sleep(1)
         files: list[Fetched] = []
         for name in ready:
             try:
                 n, size = indexed[name]
-                files.append(await asyncio.to_thread(self._stage, name, size, into, n))
+                files.append(await self._stage(name, size, into, n))
             except (FetchError, AudioError, OSError) as exc:
                 issues[name] = FetchIssue(str(exc), isinstance(exc, AudioError))
         if issues:

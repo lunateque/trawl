@@ -6,6 +6,7 @@ from typing import cast
 
 import mutagen  # pyright: ignore[reportMissingTypeStubs]
 
+from trawl.library.place import is_link, linked_ancestor, unlink_regular
 from trawl.library.repack import repack, repack_needed
 from trawl.mb.models import Release, Track, credit_string
 from trawl.normalize import norm_artist, norm_title
@@ -22,16 +23,18 @@ from trawl.verify.probe import LOSSLESS, AudioError, probe
 
 
 def scan_folder(root: Path) -> list[tuple[FolderFile, Path]]:
+    if linked_ancestor(root):
+        return []
     rows: list[tuple[FolderFile, Path]] = []
     for entry in sorted(root.iterdir()):
         paths = (
             sorted(entry.iterdir())
-            if not entry.is_symlink() and entry.is_dir() and disc_number(entry.name)
+            if not is_link(entry) and entry.is_dir() and disc_number(entry.name)
             else [entry]
         )
         for path in paths:
             ext = path.suffix.casefold()
-            if path.is_symlink() or not path.is_file() or ext not in AUDIO_EXTS | {".cue"}:
+            if is_link(path) or not path.is_file() or ext not in AUDIO_EXTS | {".cue"}:
                 continue
             audio = None
             if ext in AUDIO_EXTS:
@@ -79,10 +82,10 @@ def _discover(inboxes: tuple[Path, ...], release: Release) -> list[Folder]:
         return []
     folders: dict[Path, Folder] = {}
     for inbox in inboxes:
-        if not inbox.is_dir():
+        if linked_ancestor(inbox) or not inbox.is_dir():
             continue
         for root in sorted(inbox.resolve().iterdir()):
-            if root.is_symlink() or not root.is_dir() or root in folders:
+            if is_link(root) or not root.is_dir() or root in folders:
                 continue
             files = scan_folder(root)
             if not _name_matches(root.name, artist, title):
@@ -135,13 +138,13 @@ class LocalSource:
         return await asyncio.to_thread(self._fetch, candidate, into)
 
     def _fetch(self, candidate: Candidate, into: Path) -> list[Fetched]:
-        root = Path(candidate.ref).resolve()
+        root = Path(candidate.ref)
         files: list[Fetched] = []
         issues: dict[str, FetchIssue] = {}
         for n, item in enumerate(candidate.items):
             path = Path(item.ref)
             try:
-                if path.is_symlink() or not path.resolve().is_relative_to(root):
+                if linked_ancestor(path) or not path.resolve().is_relative_to(root.resolve()):
                     raise FetchError("local file is outside the selected folder")
                 files.append(
                     stage_file(
@@ -177,5 +180,5 @@ def stage_file(
         copyfile(src, dst)
     audio = probe(dst)
     if move:
-        src.unlink()
+        unlink_regular(src)
     return Fetched(ref, dst, audio.codec, audio.bitrate, audio.codec in LOSSLESS)

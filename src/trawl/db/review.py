@@ -4,6 +4,7 @@ from pathlib import Path
 
 from trawl.db import queue
 from trawl.db.states import Actor, TrackState, transition
+from trawl.library.place import linked_ancestor
 from trawl.sources.base import Candidate, CandidateItem, Fetched
 from trawl.sources.ytmusic import video_id
 
@@ -117,8 +118,9 @@ def rejection(conn: sqlite3.Connection, track_id: int, library_root: Path) -> Re
     ).fetchone()
     if row is None:
         return None
-    path = Path(row[3]).resolve()
-    if not path.is_relative_to(library_root.resolve() / ".trawl-staging") or not path.is_file():
+    path = Path(row[3]).absolute()
+    staging = library_root.resolve() / ".trawl-staging"
+    if linked_ancestor(path) or not path.resolve().is_relative_to(staging) or not path.is_file():
         return None
     return Rejection(row[0], row[1], row[2], path, row[4], row[5], row[6], row[7])
 

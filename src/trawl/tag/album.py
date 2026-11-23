@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 from trawl.config import Config
+from trawl.library.place import write_atomic
 from trawl.mb.client import MusicBrainzClient
 from trawl.mb.models import Release, Track
 from trawl.net.client import HttpClient
@@ -53,10 +54,8 @@ class AlbumTags:
             lyrics.embedded if lyrics else None,
         )
         if lyrics and lyrics.synced:
-            await asyncio.to_thread(
-                path.with_suffix(".lrc").write_text, lyrics.synced, encoding="utf-8"
-            )
+            await asyncio.to_thread(write_atomic, path.with_suffix(".lrc"), lyrics.synced.encode())
         if self.cover:
-            await asyncio.to_thread((path.parent / "cover.jpg").write_bytes, self.cover.full)
+            await asyncio.to_thread(write_atomic, path.parent / "cover.jpg", self.cover.full)
         await asyncio.to_thread(self.tools.track_gain, path)
         return fields

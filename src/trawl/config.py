@@ -1,5 +1,9 @@
+import logging
+import os
 import re
+import stat
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from os import environ
 from pathlib import Path
 from tomllib import TOMLDecodeError, loads
@@ -34,6 +38,7 @@ class SoulseekConfig:
     concurrency: int = 3
     search_timeout_s: int = 30
     stall_timeout_s: int = 600
+    candidate_timeout_s: int = 3600
 
 
 @dataclass(frozen=True)
@@ -108,6 +113,7 @@ class Secrets:
     yandex_token: str | None = field(default=None, repr=False)
     spotify_client_id: str | None = field(default=None, repr=False)
     spotify_refresh_token: str | None = field(default=None, repr=False)
+    slskd_allow_insecure: bool = False
 
 
 @dataclass(frozen=True)
@@ -242,7 +248,13 @@ def _sources(values: dict[str, object], text: str) -> SourcesConfig:
     _check_keys(ytmusic, {"concurrency"}, text, ("sources", "ytmusic"))
     _check_keys(
         soulseek,
-        {"download_dir", "concurrency", "search_timeout_s", "stall_timeout_s"},
+        {
+            "download_dir",
+            "concurrency",
+            "search_timeout_s",
+            "stall_timeout_s",
+            "candidate_timeout_s",
+        },
         text,
         ("sources", "soulseek"),
     )
@@ -265,6 +277,7 @@ def _sources(values: dict[str, object], text: str) -> SourcesConfig:
             _integer(soulseek.get("concurrency", 3), "soulseek.concurrency", 1),
             _integer(soulseek.get("search_timeout_s", 30), "soulseek.search_timeout_s", 1),
             _integer(soulseek.get("stall_timeout_s", 600), "soulseek.stall_timeout_s", 1),
+            _integer(soulseek.get("candidate_timeout_s", 3600), "soulseek.candidate_timeout_s", 1),
         ),
         LocalConfig(
             tuple(
@@ -433,9 +446,34 @@ def load(path: Path) -> Config:
         raise ConfigError(f"{path}: {exc}") from exc
 
 
+def slskd_insecure(url: str) -> bool:
+    parsed = urlsplit(url)
+    if parsed.scheme != "http":
+        return False
+    host = parsed.hostname or ""
+    try:
+        return not ip_address(host).is_loopback
+    except ValueError:
+        return host.rstrip(".") != "localhost"
+
+
+def secrets_permissions_warning(config: Path) -> str | None:
+    if os.name != "posix":
+        return None
+    path = config.with_name("secrets.toml")
+    try:
+        if path.stat().st_mode & (stat.S_IRGRP | stat.S_IROTH):
+            return f"{path}: group/world readable; restrict permissions with chmod 600"
+    except FileNotFoundError:
+        pass
+    return None
+
+
 def load_secrets(config: Path) -> Secrets:
     path = config.with_name("secrets.toml")
     try:
+        if warning := secrets_permissions_warning(config):
+            logging.getLogger(__name__).warning("%s", warning)
         text = path.read_text(encoding="utf-8")
         values: dict[str, object] = loads(text)
         _check_keys(
@@ -445,6 +483,7 @@ def load_secrets(config: Path) -> Secrets:
                 "youtube_cookies",
                 "slskd_url",
                 "slskd_api_key",
+                "slskd_allow_insecure",
                 "listenbrainz_token",
                 "yandex_token",
                 "spotify_client_id",
@@ -471,6 +510,12 @@ def load_secrets(config: Path) -> Secrets:
             raise ConfigError(
                 "slskd_url: expected an HTTP(S) URL without credentials, query or fragment"
             ) from None
+        insecure = _boolean(values.get("slskd_allow_insecure", False), "slskd_allow_insecure")
+        if slskd_insecure(url) and not insecure:
+            raise ConfigError(
+                "slskd_url: HTTP is allowed only for loopback hosts; use HTTPS or explicitly "
+                "set slskd_allow_insecure = true in secrets.toml"
+            )
         return Secrets(
             key or None,
             path.parent / cookies if cookies else None,
@@ -480,6 +525,7 @@ def load_secrets(config: Path) -> Secrets:
             _string(values, "yandex_token", "").strip() or None,
             _string(values, "spotify_client_id", "").strip() or None,
             _string(values, "spotify_refresh_token", "").strip() or None,
+            insecure,
         )
     except FileNotFoundError:
         return Secrets()

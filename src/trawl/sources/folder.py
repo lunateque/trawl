@@ -166,6 +166,12 @@ def rank_folders(
                 else:
                     matched = {}
             mapping = {key: file.item() for key, file in matched.items()}
+            if source == "soulseek":
+                mapping = {
+                    track.mbid: replace(item, expected_length_ms=track.length_ms)
+                    for track in tracks
+                    if (item := mapping.get(track.mbid)) is not None
+                }
             if not mapping or coverage(tracks, mapping) < threshold:
                 continue
             chosen = list(matched.values())

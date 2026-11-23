@@ -3,9 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import cast
+from uuid import UUID
 
 
 class MbDataError(ValueError):
+    pass
+
+
+class InvalidMbidError(MbDataError):
     pass
 
 
@@ -35,6 +40,17 @@ def _text(data: JsonObject, key: str) -> str:
     if not isinstance(value, str):
         raise MbDataError(f"MusicBrainz response: expected text for {key}")
     return value
+
+
+def parse_mbid(raw: object) -> str:
+    if isinstance(raw, str) and len(raw) == 36:
+        try:
+            mbid = str(UUID(raw))
+            if raw.lower() == mbid:
+                return mbid
+        except ValueError:
+            pass
+    raise InvalidMbidError("MusicBrainz identifier: expected a UUID")
 
 
 def _integer(raw: object) -> int | None:
@@ -75,7 +91,7 @@ class Credit:
         artist = object_value(data.get("artist"))
         return cls(
             _optional_text(data.get("name")) or _text(artist, "name"),
-            _text(artist, "id"),
+            parse_mbid(artist.get("id")),
             _optional_text(data.get("joinphrase")) or "",
         )
 
@@ -99,7 +115,7 @@ class ReleaseGroupRef:
     @classmethod
     def from_json(cls, data: JsonObject) -> ReleaseGroupRef:
         return cls(
-            _text(data, "id"),
+            parse_mbid(data.get("id")),
             _text(data, "title"),
             _optional_text(data.get("primary-type")),
             _strings(data.get("secondary-types")),
@@ -123,8 +139,8 @@ class Track:
         recording = object_value(data.get("recording"))
         pos = _position(data)
         return cls(
-            _text(data, "id"),
-            _text(recording, "id"),
+            parse_mbid(data.get("id")),
+            parse_mbid(recording.get("id")),
             pos,
             _optional_text(data.get("number")) or str(pos),
             _text(data, "title"),
@@ -183,7 +199,7 @@ class Release:
             if label := object_value(item).get("label"):
                 labels.append(_text(object_value(label), "name"))
         return cls(
-            _text(data, "id"),
+            parse_mbid(data.get("id")),
             _text(data, "title"),
             _optional_text(data.get("status")),
             _optional_text(data.get("country")),
@@ -208,7 +224,7 @@ class ReleaseRef:
     @classmethod
     def from_json(cls, data: JsonObject) -> ReleaseRef:
         return cls(
-            _text(data, "id"),
+            parse_mbid(data.get("id")),
             _optional_text(data.get("status")),
             _optional_text(data.get("country")),
             _optional_text(data.get("date")),
@@ -228,7 +244,7 @@ class RecordingRef:
     @classmethod
     def from_json(cls, data: JsonObject) -> RecordingRef:
         return cls(
-            _text(data, "id"),
+            parse_mbid(data.get("id")),
             _text(data, "title"),
             _integer(data.get("length")),
             _credits(data),
@@ -248,7 +264,7 @@ class ArtistRef:
     def from_json(cls, data: JsonObject) -> ArtistRef:
         name = _text(data, "name")
         return cls(
-            _text(data, "id"),
+            parse_mbid(data.get("id")),
             name,
             _optional_text(data.get("sort-name")) or name,
             _integer(data.get("score")),

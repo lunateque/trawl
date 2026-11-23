@@ -38,6 +38,7 @@ async def fetch_lyrics(
                     "album_name": album,
                     "duration": str(duration_s),
                 },
+                limit=2_000_000,
             )
         )
     except HttpError as exc:
